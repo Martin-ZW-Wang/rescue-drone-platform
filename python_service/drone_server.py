@@ -8,7 +8,7 @@ from queue import Full, Queue
 import cv2
 import numpy as np
 import requests
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 
@@ -39,6 +39,16 @@ OUT_SIZE = 512
 STREAM_FPS = 12.0
 PROC_FPS = 2.0
 JPEG_QUALITY = 60
+RC_API_MIN = -100
+RC_API_MAX = 100
+RC_SAFE_MIN = -50
+RC_SAFE_MAX = 50
+NUDGE_VERTICAL_SPEED = 30
+NUDGE_VERTICAL_DURATION_SEC = 0.45
+NUDGE_HORIZONTAL_SPEED = 25
+NUDGE_HORIZONTAL_DURATION_SEC = 0.35
+NUDGE_YAW_SPEED = 30
+NUDGE_YAW_DURATION_SEC = 0.35
 
 tracking_active = False
 
@@ -90,11 +100,14 @@ def _error_jpg(text: str) -> bytes:
 
 
 def _status_dict():
+    runtime.refresh_state()
     st = runtime.state
     return {
         "connected": st.connected,
         "streaming": st.streaming,
+        "flying": st.flying,
         "battery": st.battery,
+        "tello_state": st.tello_state,
         "error": st.last_error,
         "tracking": tracking_active,
         "seg_enabled": tracking_active,
@@ -107,6 +120,24 @@ def _status_dict():
         "no_det_streak": _no_det_streak,
         "jpeg_quality": JPEG_QUALITY,
     }
+
+
+def _clamp(value: int, lower: int, upper: int) -> int:
+    return max(lower, min(upper, value))
+
+
+def _status_response(ok: bool, message: str, status_code: int = 200, error=None):
+    status_data = _status_dict()
+    payload = {
+        "ok": ok,
+        "message": message,
+        **status_data,
+        "status": status_data,
+    }
+    if error is not None:
+        payload["error"] = error
+    socketio.emit("status", status_data)
+    return jsonify(payload), status_code
 
 
 def _save_event_to_laravel(evt: dict):
@@ -156,6 +187,10 @@ def _ensure_started() -> bool:
 
     _started = True
     return True
+
+
+def _ensure_connected() -> bool:
+    return runtime.connect()
 
 
 def _event_save_loop():
@@ -357,6 +392,139 @@ def stop_tracking():
     return jsonify({"ok": True, "message": "Tracking stopped"}), 200
 
 
+@app.post("/takeoff")
+def takeoff():
+    if not _ensure_connected():
+        return _status_response(False, "Unable to connect before takeoff", 503, runtime.state.last_error)
+
+    if not runtime.takeoff():
+        return _status_response(False, "Takeoff failed", 503, runtime.state.last_error)
+
+    if not _ensure_started():
+        return _status_response(True, "Takeoff complete, but stream restart failed", 200, runtime.state.last_error)
+
+    return _status_response(True, "Takeoff complete")
+
+
+@app.post("/land")
+def land():
+    runtime.stop_motion()
+
+    if not runtime.land():
+        return _status_response(False, "Landing failed", 503, runtime.state.last_error)
+
+    return _status_response(True, "Landing complete")
+
+
+@app.post("/emergency")
+def emergency():
+    if not runtime.emergency():
+        return _status_response(False, "Emergency stop failed", 500, runtime.state.last_error)
+
+    return _status_response(True, "Emergency stop command sent")
+
+
+@app.post("/sdk/reset")
+def reset_sdk():
+    global _started
+    _started = False
+
+    if not runtime.reset_sdk():
+        return _status_response(False, "SDK reset failed", 503, runtime.state.last_error)
+
+    return _status_response(True, "SDK reset complete")
+
+
+@app.post("/rc")
+def rc():
+    payload = request.get_json(silent=True) or {}
+    values = {}
+
+    for key in ("lr", "fb", "ud", "yaw"):
+        if key not in payload:
+            return _status_response(False, f"Missing RC value: {key}", 400, "MISSING_RC_VALUE")
+
+        try:
+            raw_value = int(payload[key])
+        except (TypeError, ValueError):
+            return _status_response(False, f"Invalid RC value: {key}", 400, "INVALID_RC_VALUE")
+
+        api_limited = _clamp(raw_value, RC_API_MIN, RC_API_MAX)
+        values[key] = _clamp(api_limited, RC_SAFE_MIN, RC_SAFE_MAX)
+
+    if not runtime.state.flying:
+        return _status_response(False, "RC ignored because drone is not flying", 409, "DRONE_NOT_FLYING")
+
+    if not runtime.rc(values["lr"], values["fb"], values["ud"], values["yaw"]):
+        return _status_response(False, "RC command failed", 503, runtime.state.last_error)
+
+    return _status_response(True, "RC command sent")
+
+
+def _nudge(lr: int = 0, fb: int = 0, ud: int = 0, yaw: int = 0):
+    if not runtime.nudge_rc(lr=lr, fb=fb, ud=ud, yaw=yaw, duration_sec=NUDGE_HORIZONTAL_DURATION_SEC):
+        status_code = 409 if runtime.state.last_error == "DRONE_NOT_FLYING" else 503
+        return _status_response(False, "Nudge failed", status_code, runtime.state.last_error)
+
+    return _status_response(True, "Nudge complete")
+
+
+def _nudge_yaw(yaw: int):
+    if not runtime.nudge_rc(yaw=yaw, duration_sec=NUDGE_YAW_DURATION_SEC):
+        status_code = 409 if runtime.state.last_error == "DRONE_NOT_FLYING" else 503
+        return _status_response(False, "Yaw nudge failed", status_code, runtime.state.last_error)
+
+    return _status_response(True, "Yaw nudge complete")
+
+
+@app.post("/nudge/up")
+def nudge_up():
+    if not runtime.nudge_rc(ud=NUDGE_VERTICAL_SPEED, duration_sec=NUDGE_VERTICAL_DURATION_SEC):
+        status_code = 409 if runtime.state.last_error == "DRONE_NOT_FLYING" else 503
+        return _status_response(False, "Nudge up failed", status_code, runtime.state.last_error)
+
+    return _status_response(True, "Nudge up complete")
+
+
+@app.post("/nudge/down")
+def nudge_down():
+    if not runtime.nudge_rc(ud=-NUDGE_VERTICAL_SPEED, duration_sec=NUDGE_VERTICAL_DURATION_SEC):
+        status_code = 409 if runtime.state.last_error == "DRONE_NOT_FLYING" else 503
+        return _status_response(False, "Nudge down failed", status_code, runtime.state.last_error)
+
+    return _status_response(True, "Nudge down complete")
+
+
+@app.post("/nudge/left")
+def nudge_left():
+    return _nudge(lr=-NUDGE_HORIZONTAL_SPEED)
+
+
+@app.post("/nudge/right")
+def nudge_right():
+    return _nudge(lr=NUDGE_HORIZONTAL_SPEED)
+
+
+@app.post("/nudge/forward")
+def nudge_forward():
+    return _nudge(fb=NUDGE_HORIZONTAL_SPEED)
+
+
+@app.post("/nudge/back")
+def nudge_back():
+    return _nudge(fb=-NUDGE_HORIZONTAL_SPEED)
+
+
+@app.post("/nudge/yaw-left")
+def nudge_yaw_left():
+    return _nudge_yaw(-NUDGE_YAW_SPEED)
+
+
+@app.post("/nudge/yaw-right")
+def nudge_yaw_right():
+    return _nudge_yaw(NUDGE_YAW_SPEED)
+
+
 @app.post("/pose/start")
 def start_pose():
     set_pose_enabled(True)
@@ -371,7 +539,7 @@ def stop_pose():
 
 @socketio.on("connect")
 def on_connect():
-    _ensure_started()
+    _ensure_connected()
     emit("status", _status_dict())
 
 
