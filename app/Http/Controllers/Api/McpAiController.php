@@ -9,6 +9,7 @@ use DOMDocument;
 use DOMXPath;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use Throwable;
 
@@ -53,10 +54,23 @@ class McpAiController extends Controller
     public function recentEvents(Request $request): JsonResponse
     {
         $limit = max(1, min((int) $request->query('limit', 10), 50));
+        $since = $this->parseSince($request->query('since'));
 
         return response()->json([
             'ok' => true,
-            'events' => $this->events($limit),
+            'events' => $this->events($limit, $since),
+            'since' => $since?->toIso8601String(),
+        ]);
+    }
+
+    public function clearEvents(): JsonResponse
+    {
+        $deleted = RescueEvent::query()->delete();
+
+        return response()->json([
+            'ok' => true,
+            'message' => 'Test events cleared',
+            'deleted' => $deleted,
         ]);
     }
 
@@ -66,11 +80,13 @@ class McpAiController extends Controller
             'limit' => 'nullable|integer|min:1|max:50',
             'mode' => 'nullable|string|in:rescue,general,web',
             'question' => 'nullable|string|max:1000',
+            'since' => 'nullable|date',
         ]);
 
         $mode = $data['mode'] ?? 'rescue';
         $limit = $data['limit'] ?? 10;
-        $events = $this->events($limit);
+        $since = isset($data['since']) ? $this->parseSince($data['since']) : null;
+        $events = $this->events($limit, $since);
         $question = trim($data['question'] ?? '請摘要目前救援事件。');
 
         if ($question === '') {
@@ -164,9 +180,15 @@ class McpAiController extends Controller
         }
     }
 
-    private function events(int $limit): array
+    private function events(int $limit, ?Carbon $since = null): array
     {
-        return RescueEvent::query()
+        $query = RescueEvent::query();
+
+        if ($since !== null) {
+            $query->where('event_time', '>=', $since);
+        }
+
+        return $query
             ->latest('event_time')
             ->latest('id')
             ->limit($limit)
@@ -181,6 +203,19 @@ class McpAiController extends Controller
                 'review_status' => $event->review_status,
             ])
             ->all();
+    }
+
+    private function parseSince(mixed $value): ?Carbon
+    {
+        if (! is_string($value) || trim($value) === '') {
+            return null;
+        }
+
+        try {
+            return Carbon::parse($value);
+        } catch (Throwable) {
+            return null;
+        }
     }
 
     private function webSearch(string $query, int $limit = self::WEB_SOURCE_LIMIT): array

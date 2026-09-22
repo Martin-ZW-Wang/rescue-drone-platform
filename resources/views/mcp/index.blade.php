@@ -449,7 +449,10 @@
                 <div style="display:flex; justify-content:space-between; gap:10px; align-items:center;">
                     <h2 class="side-title" style="margin:0;">近期救援事件</h2>
                     <button id="mcpReloadEventsBtn" class="mini-action" type="button">重新整理</button>
+                    <button id="mcpClearEventsBtn" class="mini-action" type="button" style="color:#fca5a5; margin-left:10px;">清除測試事件</button>
                 </div>
+                <div style="color:#94a3b8; font-size:12px; margin-top:8px;">本區只顯示本次啟動後的新事件；歷史事件已隱藏。</div>
+                <div id="mcpDetectionNotice" class="event-item" style="display:none; margin-top:10px; border-color:rgba(245,158,11,.45); color:#fde68a;"></div>
                 <ul id="mcpEventsBody" class="event-list" style="margin-top:10px;">
                     <li class="event-item">載入中...</li>
                 </ul>
@@ -464,7 +467,6 @@
             <header class="chat-header">
                 <div>
                     <h1 class="chat-title">本地 AI 助手</h1>
-                    <p class="chat-subtitle">像 ChatGPT 一樣對話，並可切換救援事件分析或一般本地模型問答。</p>
                 </div>
                 <div class="mode-tabs" role="tablist" aria-label="對話模式">
                     <button id="mcpRescueModeBtn" class="mode-btn active" type="button">救援事件分析</button>
@@ -497,6 +499,7 @@
             refreshBtn: document.getElementById('mcpRefreshBtn'),
             summarizeBtn: document.getElementById('mcpSummarizeBtn'),
             reloadEventsBtn: document.getElementById('mcpReloadEventsBtn'),
+            clearEventsBtn: document.getElementById('mcpClearEventsBtn'),
             rescueModeBtn: document.getElementById('mcpRescueModeBtn'),
             generalModeBtn: document.getElementById('mcpGeneralModeBtn'),
             webModeBtn: document.getElementById('mcpWebModeBtn'),
@@ -508,11 +511,14 @@
             question: document.getElementById('mcpQuestion'),
             modeHint: document.getElementById('mcpModeHint'),
             messages: document.getElementById('chatMessages'),
+            detectionNotice: document.getElementById('mcpDetectionNotice'),
             eventsBody: document.getElementById('mcpEventsBody'),
         };
 
         let mcpMode = 'rescue';
         let isSending = false;
+        let mcpSessionStartedAt = new Date().toISOString();
+        let mcpLastDroneStatus = null;
 
         function escapeHtml(value) {
             return String(value ?? '')
@@ -654,9 +660,25 @@
             scrollChatToBottom();
         }
 
+        function updateDetectionNotice() {
+            if (!mcpEls.detectionNotice) return;
+
+            const segEnabled = mcpLastDroneStatus?.seg_enabled === true || mcpLastDroneStatus?.tracking === true;
+
+            if (segEnabled) {
+                mcpEls.detectionNotice.style.display = 'none';
+                mcpEls.detectionNotice.textContent = '';
+                return;
+            }
+
+            mcpEls.detectionNotice.style.display = 'block';
+            mcpEls.detectionNotice.textContent = '目前未開啟即時偵測，事件列表只會顯示本次啟動後已產生的新事件。';
+        }
+
         function renderEvents(events) {
+            updateDetectionNotice();
             if (!events || events.length === 0) {
-                mcpEls.eventsBody.innerHTML = '<li class="event-item">目前沒有救援事件。</li>';
+                mcpEls.eventsBody.innerHTML = '<li class="event-item">本次啟動後尚未收到新救援事件。</li>';
                 return;
             }
 
@@ -676,6 +698,8 @@
             try {
                 const data = await mcpFetchJson('/api/mcp/status');
                 const drone = data.drone || {};
+                mcpLastDroneStatus = drone;
+                updateDetectionNotice();
                 const connected = drone.connected === true;
                 const streaming = drone.streaming === true;
 
@@ -691,6 +715,8 @@
                     mcpEls.tools.innerHTML += `<li>Drone API warning: ${escapeHtml(data.drone_error)}</li>`;
                 }
             } catch (error) {
+                mcpLastDroneStatus = null;
+                updateDetectionNotice();
                 mcpEls.tools.innerHTML = `<li>MCP 狀態讀取失敗：${escapeHtml(error.message)}</li>`;
                 mcpEls.droneState.textContent = '讀取失敗';
                 mcpEls.droneState.style.color = '#ef4444';
@@ -701,10 +727,41 @@
             mcpEls.eventsBody.innerHTML = '<li class="event-item">載入中...</li>';
 
             try {
-                const data = await mcpFetchJson('/api/mcp/events/recent?limit=10');
+                const params = new URLSearchParams({
+                    limit: '10',
+                    since: mcpSessionStartedAt,
+                });
+                const data = await mcpFetchJson(`/api/mcp/events/recent?${params.toString()}`);
                 renderEvents(data.events);
             } catch (error) {
                 mcpEls.eventsBody.innerHTML = `<li class="event-item">事件讀取失敗：${escapeHtml(error.message)}</li>`;
+            }
+        }
+
+        async function clearMcpEvents() {
+            if (!window.confirm('確定要清除目前資料庫中的測試救援事件嗎？此動作無法復原。')) {
+                return;
+            }
+
+            if (mcpEls.clearEventsBtn) {
+                mcpEls.clearEventsBtn.disabled = true;
+            }
+
+            try {
+                const data = await mcpFetchJson('/api/mcp/events/clear', {
+                    method: 'DELETE',
+                });
+
+                mcpSessionStartedAt = new Date().toISOString();
+                renderEvents([]);
+                addMessage('assistant', `已清除 ${data.deleted ?? 0} 筆測試事件。之後只會顯示本次啟動後的新事件。`, { copyable: false });
+            } catch (error) {
+                addMessage('assistant', `清除測試事件失敗：${error.message}`, { copyable: true });
+            } finally {
+                if (mcpEls.clearEventsBtn) {
+                    mcpEls.clearEventsBtn.disabled = false;
+                }
+                loadMcpEvents();
             }
         }
 
@@ -727,6 +784,7 @@
                         limit: 10,
                         mode: mcpMode,
                         question,
+                        since: mcpSessionStartedAt,
                     }),
                 });
 
@@ -774,6 +832,7 @@
         document.addEventListener('DOMContentLoaded', () => {
             mcpEls.refreshBtn.addEventListener('click', loadMcpStatus);
             mcpEls.reloadEventsBtn.addEventListener('click', loadMcpEvents);
+            mcpEls.clearEventsBtn?.addEventListener('click', clearMcpEvents);
             mcpEls.summarizeBtn.addEventListener('click', sendMessage);
             mcpEls.rescueModeBtn.addEventListener('click', () => setMcpMode('rescue'));
             mcpEls.generalModeBtn.addEventListener('click', () => setMcpMode('general'));

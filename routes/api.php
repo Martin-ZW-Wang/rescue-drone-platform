@@ -35,5 +35,6 @@ Route::get('/events/{event}', [EventQueryController::class, 'show']);
 Route::prefix('mcp')->group(function () {
     Route::get('/status', [McpAiController::class, 'status']);
     Route::get('/events/recent', [McpAiController::class, 'recentEvents']);
+    Route::delete('/events/clear', [McpAiController::class, 'clearEvents']);
     Route::post('/summarize', [McpAiController::class, 'summarize']);
 });

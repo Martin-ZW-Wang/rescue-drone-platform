@@ -37,8 +37,8 @@ def _get_pose_model():
 # 2) Parameters
 # =========================
 # 比原本更容易累積到疑似受傷 / 待救援
-RESCUE_CONFIRM_FRAMES = 6
-SUSPECT_FRAMES = 2
+SUSPECT_THRESHOLD = 2
+RESCUE_THRESHOLD = 6
 
 # 判定稍微放寬
 BBOX_HORIZONTAL_RATIO = 0.82
@@ -48,19 +48,20 @@ KP_CONF = 0.5
 # 簡易 tracking
 TRACK_GRID = 80
 TRACK_FORGET_SEC = 4.0
+TRACK_IOU_THRESHOLD = 0.20
+TRACK_CENTER_DIST_THRESHOLD = 120.0
 
 # 效能優化：保留，但不要太保守
 POSE_MIN_CONF = 0.5       # 原本 0.45，太高
 POSE_MIN_AREA = 128 * 128   # 原本 75*75，太大
 POSE_EVERY_N_FRAMES = 1    # 每次 process_frame 都允許跑 pose
 DETECT_IMGSZ = 640         # Match the SEG training image size.
-DETECT_CONF = 0.25         # Keep live recall high; temporal tracking filters unstable hits.
-SEG_INJURED_CONF = 0.25
-SEG_STABLE_IOU = 0.25
-SEG_STABLE_CENTER_SHIFT = 120.0
+SEG_CONF = 0.5            # Runtime injured-person segmentation confidence.
+DETECT_IOU = 0.5          # YOLO/NMS IoU threshold; separate from temporal matching.
 
 # 全域 tracking 狀態
 tracks = {}
+next_track_id = 1
 frame_counter = 0
 
 # =========================
@@ -73,6 +74,25 @@ def angle_with_vertical(p1, p2):
 
 def simple_track_id(cx, cy, grid=TRACK_GRID):
     return (int(cx // grid), int(cy // grid))
+
+
+def bbox_center(xyxy):
+    x1, y1, x2, y2 = [float(v) for v in xyxy]
+    return ((x1 + x2) / 2.0, (y1 + y2) / 2.0)
+
+
+def center_distance(center_a, center_b):
+    return math.hypot(center_a[0] - center_b[0], center_a[1] - center_b[1])
+
+
+def get_event_state(evidence):
+    if evidence >= RESCUE_THRESHOLD:
+        return "Rescue Needed"
+    if evidence >= SUSPECT_THRESHOLD:
+        return "Suspected Injury"
+    if evidence > 0:
+        return "Detected Injury"
+    return None
 
 
 def bbox_iou(a, b):
@@ -156,13 +176,15 @@ def run_seg_diagnostics(frame_bgr: np.ndarray, output_dir: Path | None = None) -
         "rgb_channels_swapped": cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB),
         "low_light_enhanced_bgr": enhance_low_light_bgr(frame_bgr),
     }
-    thresholds = [0.05, 0.10, 0.20]
+    thresholds = [0.05, 0.10, 0.20, SEG_CONF]
 
     report = {
         "model": str(DETECT_MODEL_PATH),
         "task": getattr(det_model, "task", None),
         "names": getattr(det_model, "names", None),
         "imgsz": DETECT_IMGSZ,
+        "seg_conf": SEG_CONF,
+        "detect_iou": DETECT_IOU,
         "frame_shape": list(frame_bgr.shape),
         "frame_bgr_mean": [float(v) for v in frame_bgr.reshape(-1, 3).mean(axis=0)],
         "runs": [],
@@ -173,7 +195,7 @@ def run_seg_diagnostics(frame_bgr: np.ndarray, output_dir: Path | None = None) -
             result = det_model.predict(
                 image,
                 conf=conf,
-                iou=0.3,
+                iou=DETECT_IOU,
                 imgsz=DETECT_IMGSZ,
                 max_det=20,
                 verbose=False,
@@ -339,73 +361,123 @@ def _cleanup_tracks():
         tracks.pop(k, None)
 
 
-def update_track_decision(tid, injured, pose_unclear, conf, bbox, dbg):
-    st = tracks.get(tid, {
-        "sus": 0,
-        "rescue": 0,
+def _create_track(grid_id, bbox, center):
+    global next_track_id
+
+    tid = next_track_id
+    next_track_id += 1
+    tracks[tid] = {
+        "target_id": tid,
+        "grid_id": grid_id,
+        "bbox": [int(v) for v in bbox],
+        "center": center,
+        "evidence": 0,
+        "state": None,
         "last_seen": time.time(),
-        "printed": False,
-        "last_bbox": None
-    })
+        "event_emitted": False,
+    }
+    return tid
+
+
+def match_track(bbox, matched_ids):
+    center = bbox_center(bbox)
+    grid_id = simple_track_id(center[0], center[1])
+
+    # Priority 1: same grid ID.
+    same_grid = [
+        (tid, st) for tid, st in tracks.items()
+        if tid not in matched_ids and st.get("grid_id") == grid_id
+    ]
+    if same_grid:
+        tid, _ = max(same_grid, key=lambda item: item[1].get("last_seen", 0.0))
+        return tid, {
+            "grid_id": grid_id,
+            "match_method": "grid",
+            "match_iou": None,
+            "match_center_distance": None,
+        }
+
+    # Priority 2: IoU / center-distance fallback for grid-boundary jitter.
+    best = None
+    for tid, st in tracks.items():
+        if tid in matched_ids:
+            continue
+
+        iou = bbox_iou(st.get("bbox", bbox), bbox)
+        distance = center_distance(st.get("center", center), center)
+        if iou >= TRACK_IOU_THRESHOLD or distance <= TRACK_CENTER_DIST_THRESHOLD:
+            score = (iou, -distance)
+            if best is None or score > best[0]:
+                best = (score, tid, iou, distance)
+
+    if best is not None:
+        _, tid, iou, distance = best
+        return tid, {
+            "grid_id": grid_id,
+            "match_method": "iou_center",
+            "match_iou": float(iou),
+            "match_center_distance": float(distance),
+        }
+
+    # Priority 3: create new target.
+    tid = _create_track(grid_id, bbox, center)
+    return tid, {
+        "grid_id": grid_id,
+        "match_method": "new",
+        "match_iou": None,
+        "match_center_distance": None,
+    }
+
+
+def decay_unmatched_tracks(matched_ids):
+    for tid, st in list(tracks.items()):
+        if tid in matched_ids:
+            continue
+
+        st["evidence"] = max(int(st.get("evidence", 0)) - 1, 0)
+        st["state"] = get_event_state(st["evidence"])
+        if st["evidence"] == 0:
+            st["event_emitted"] = False
+        tracks[tid] = st
+
+
+def update_track_decision(tid, conf, bbox, dbg):
+    st = tracks[tid]
+    center = bbox_center(bbox)
+    st["bbox"] = [int(v) for v in bbox]
+    st["center"] = center
+    st["grid_id"] = dbg.get("grid_id", simple_track_id(center[0], center[1]))
     st["last_seen"] = time.time()
-
-    prev_bbox = st.get("last_bbox")
-    requires_stability = bool(dbg.get("requires_stability", False))
-    stable_detection = True
-    if requires_stability and prev_bbox is not None:
-        iou = bbox_iou(prev_bbox, bbox)
-        shift = bbox_center_shift(prev_bbox, bbox)
-        stable_detection = (iou >= SEG_STABLE_IOU) or (shift <= SEG_STABLE_CENTER_SHIFT)
-        dbg["stable_iou"] = float(iou)
-        dbg["center_shift"] = float(shift)
-    dbg["stable_detection"] = bool(stable_detection)
-    st["last_bbox"] = [int(v) for v in bbox]
-
-    if injured and stable_detection:
-        st["sus"] += 1
-        st["rescue"] += 1
-    else:
-        st["sus"] = max(0, st["sus"] - 1)
-        st["rescue"] = max(0, st["rescue"] - 1)
-        if st["rescue"] == 0:
-            st["printed"] = False
-
-    tracks[tid] = st
-
-    status = "OK"
-    if pose_unclear:
-        status = "Pose Unclear"
-    elif st["sus"] >= SUSPECT_FRAMES:
-        status = "Suspected Injury"
-    elif injured and st["sus"] > 0:
-        status = "Detected Injury"
+    st["evidence"] = int(st.get("evidence", 0)) + 1
+    st["state"] = get_event_state(st["evidence"])
 
     event = None
-    if st["rescue"] >= RESCUE_CONFIRM_FRAMES:
-        status = "Rescue Needed"
-        if not st["printed"]:
-            source = dbg.get("decision_source", "unknown").upper()
-            msg = f"[RESCUE NEEDED] ID={tid} {source}={conf * 100:.0f}% ratio={dbg.get('bbox_ratio')} ang={dbg.get('torso_angle')}"
-            print(msg)
-            st["printed"] = True
-            tracks[tid] = st
-            event = {
-                "type": "RESCUE",
-                "message": msg,
-                "tid": str(tid),
-                "conf": conf,
-                "bbox": [int(v) for v in bbox],
-                "dbg": dbg,
-                "decision_source": dbg.get("decision_source"),
-                "ts": time.time()
-            }
+    if st["state"] == "Rescue Needed" and not st.get("event_emitted", False):
+        msg = (
+            f"[RESCUE NEEDED] ID={tid} SEG={conf * 100:.0f}% "
+            f"evidence={st['evidence']} ratio={dbg.get('bbox_ratio')} "
+            f"pose_valid={dbg.get('pose_valid')}"
+        )
+        print(msg)
+        st["event_emitted"] = True
+        event = {
+            "type": "RESCUE",
+            "message": msg,
+            "tid": str(tid),
+            "conf": conf,
+            "bbox": [int(v) for v in bbox],
+            "dbg": dbg,
+            "decision_source": "seg",
+            "ts": time.time()
+        }
 
-    return status, event
+    tracks[tid] = st
+    return st["state"], event
 
 # =========================
 # 4) Main API
 # =========================
-def process_frame(frame_bgr: np.ndarray):
+def _legacy_process_frame_grid_only(frame_bgr: np.ndarray):
     """
     輸入：BGR frame
     輸出：
@@ -462,7 +534,7 @@ def process_frame(frame_bgr: np.ndarray):
         return infos
 
     # detector conf 不要太高，讓倒地人物較容易被抓出
-    det = det_model.predict(frame_bgr, conf=DETECT_CONF, iou=0.3, imgsz=DETECT_IMGSZ, max_det=20, verbose=False)[0]
+    det = det_model.predict(frame_bgr, conf=SEG_CONF, iou=DETECT_IOU, imgsz=DETECT_IMGSZ, max_det=20, verbose=False)[0]
     if det.boxes is None or len(det.boxes) == 0:
         return infos
 
@@ -520,7 +592,7 @@ def process_frame(frame_bgr: np.ndarray):
                 injured = False
                 dbg["decision_source"] = "pose_unclear"
         else:
-            injured = conf >= SEG_INJURED_CONF
+            injured = conf >= SEG_CONF
 
         st = tracks.get(tid, {
             "sus": 0,
@@ -537,7 +609,7 @@ def process_frame(frame_bgr: np.ndarray):
         if prev_bbox is not None:
             iou = bbox_iou(prev_bbox, bbox)
             shift = bbox_center_shift(prev_bbox, bbox)
-            stable_detection = (iou >= SEG_STABLE_IOU) or (shift <= SEG_STABLE_CENTER_SHIFT)
+            stable_detection = (iou >= TRACK_IOU_THRESHOLD) or (shift <= TRACK_CENTER_DIST_THRESHOLD)
             dbg["stable_iou"] = float(iou)
             dbg["center_shift"] = float(shift)
         dbg["stable_detection"] = bool(stable_detection)
@@ -558,13 +630,13 @@ def process_frame(frame_bgr: np.ndarray):
         status = "OK"
         if pose_unclear:
             status = "Pose Unclear"
-        elif st["sus"] >= SUSPECT_FRAMES:
+        elif st["sus"] >= SUSPECT_THRESHOLD:
             status = "Suspected Injury"
         elif injured and st["sus"] > 0:
             status = "Detected Injury"
 
         event = None
-        if st["rescue"] >= RESCUE_CONFIRM_FRAMES:
+        if st["rescue"] >= RESCUE_THRESHOLD:
             status = "Rescue Needed"
             if not st["printed"]:
                 msg = f"[RESCUE NEEDED] ID={tid} SEG={conf * 100:.0f}% ratio={dbg['bbox_ratio']} ang={dbg['torso_angle']}"
@@ -593,6 +665,109 @@ def process_frame(frame_bgr: np.ndarray):
             "event": event,
         })
 
+    return infos
+
+
+def process_frame(frame_bgr: np.ndarray):
+    """
+    SEG is the primary injured-person recognition path.
+    Pose is auxiliary only and never rejects a positive SEG candidate.
+    """
+    global frame_counter
+    frame_counter += 1
+
+    infos = []
+    matched_ids = set()
+    _cleanup_tracks()
+
+    det = det_model.predict(
+        frame_bgr,
+        conf=SEG_CONF,
+        iou=DETECT_IOU,
+        imgsz=DETECT_IMGSZ,
+        max_det=20,
+        verbose=False,
+    )[0]
+
+    if det.boxes is None or len(det.boxes) == 0:
+        decay_unmatched_tracks(matched_ids)
+        return infos
+
+    for index, box in enumerate(det.boxes):
+        conf = float(box.conf[0]) if box.conf is not None else 0.0
+        raw_xyxy = [float(v) for v in box.xyxy[0]]
+        x1, y1, x2, y2 = refine_bbox_from_seg_mask(det, index, raw_xyxy, frame_bgr.shape)
+
+        w = max(1.0, x2 - x1)
+        h = max(1.0, y2 - y1)
+        area = w * h
+        ratio = w / h
+
+        bbox = [int(x1), int(y1), int(x2), int(y2)]
+        dbg = {
+            "bbox_ratio": float(ratio),
+            "torso_angle": None,
+            "pose_valid": False,
+            "decision_source": "seg",
+            "seg_conf": float(conf),
+            "seg_threshold": SEG_CONF,
+            "detect_iou": DETECT_IOU,
+            "pose_aux_enabled": bool(pose_enabled),
+        }
+
+        x1i, y1i, x2i, y2i = map(
+            int,
+            [max(0, x1), max(0, y1), min(frame_bgr.shape[1] - 1, x2), min(frame_bgr.shape[0] - 1, y2)]
+        )
+        crop = frame_bgr[y1i:y2i, x1i:x2i]
+        if crop.size == 0:
+            continue
+
+        kpts = None
+        should_run_pose = (
+            pose_enabled and
+            conf >= POSE_MIN_CONF and
+            area >= POSE_MIN_AREA and
+            (frame_counter % POSE_EVERY_N_FRAMES == 0)
+        )
+
+        if should_run_pose:
+            try:
+                pose_res = _get_pose_model().predict(crop, conf=0.20, verbose=False)[0]
+                kpts = extract_best_pose_keypoints(pose_res, x1i, y1i)
+            except Exception as e:
+                dbg["pose_error"] = str(e)
+                kpts = None
+
+        if kpts is not None and kpts.shape[0] >= 17:
+            pose_injured, pose_dbg = analyze_pose_topdown((x1, y1, x2, y2), kpts)
+            dbg.update({
+                "torso_angle": pose_dbg.get("torso_angle"),
+                "pose_valid": pose_dbg.get("pose_valid", False),
+                "pose_aux_injured": bool(pose_injured),
+                "pose_aux_source": "pose",
+            })
+        elif pose_enabled:
+            dbg["pose_aux_source"] = "pose_unavailable"
+
+        tid, match_dbg = match_track(bbox, matched_ids)
+        matched_ids.add(tid)
+        dbg.update(match_dbg)
+
+        status, event = update_track_decision(tid, conf, bbox, dbg)
+
+        infos.append({
+            "tid": str(tid),
+            "status": status,
+            "conf": conf,
+            "bbox": bbox,
+            "dbg": dbg,
+            "decision_source": "seg",
+            "kpts": None if kpts is None else kpts.tolist(),
+            "event": event,
+        })
+
+    decay_unmatched_tracks(matched_ids)
     return infos
 
 
