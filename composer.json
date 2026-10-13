@@ -36,6 +36,7 @@
             "composer install",
             "@php -r \"file_exists('.env') || copy('.env.example', '.env');\"",
             "@php artisan key:generate",
+            "@php -r \"file_exists('database/database.sqlite') || touch('database/database.sqlite');\"",
             "@php artisan migrate --force",
             "npm install",
             "npm run build"
@@ -46,7 +47,11 @@
         ],
         "dev:drone": [
             "Composer\\Config::disableProcessTimeout",
-            "npx concurrently -c \"#93c5fd,#c4b5fd,#fdba74,#86efac,#f9a8d4\" \"php artisan serve\" \"php artisan queue:listen --tries=1 --timeout=0\" \"npm run dev\" \"python python_service/drone_server.py\" \"python mcp_server/server.py\" --names=server,queue,vite,drone,mcp --kill-others"
+            "npx concurrently -c \"#93c5fd,#c4b5fd,#fdba74,#86efac,#f9a8d4\" \"php artisan serve --host=0.0.0.0 --port=8000\" \"php artisan queue:listen --tries=1 --timeout=0\" \"npm run dev\" \"python python_service/drone_server.py\" \"python mcp_server/server.py\" --names=server,queue,vite,drone,mcp --kill-others"
+        ],
+        "dev:drone:openwrt": [
+            "Composer\\Config::disableProcessTimeout",
+            "powershell -ExecutionPolicy Bypass -File tools/dev-drone-openwrt.ps1"
         ],
         "test": [
             "@php artisan config:clear --ansi",

@@ -9,6 +9,7 @@
 !.env.example
 !.env.*.example
 auth.json
+.ssh/
 
 # ----------------------------------------------------------------------
 
@@ -121,6 +122,8 @@ htmlcov/
 *.tflite
 *.pb
 *.safetensors
+*.img
+*.vdi
 
 # 如果你的專案不需要提交任何二進位模型檔，可以保留這行。
 
@@ -152,6 +155,8 @@ recordings/
 frames/
 tmp_frames/
 temp_frames/
+public/rescue-events/
+vbox/
 
 *.avi
 *.mp4

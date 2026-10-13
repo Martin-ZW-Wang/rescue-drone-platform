@@ -1,89 +1,56 @@
 # Rescue Drone Platform
 
-Rescue Drone Platform 是一個結合 Laravel、Python Flask-SocketIO、Tello 無人機、YOLO/SEG/Pose 偵測與本地 Ollama/MCP 工具的救援偵測平台。
+An integrated rescue-drone command center built with Laravel, Vite, a Python
+Flask-SocketIO drone service, YOLO-based casualty detection, posture assessment,
+incident review, local AI assistance through Ollama/MCP, and optional OpenWrt
+radio-channel testing.
 
-系統目標是讓使用者可以透過 Laravel Dashboard 控制 Python 無人機服務，觀看即時影像串流，偵測疑似救援事件，將事件寫入資料庫，並透過 MCP / Ollama 對近期事件做摘要分析。
-
-## 目前狀態
-
-這個專案已具備主要原始碼與設定樣板，但若要讓別人 clone 後完整重建，仍有幾個需要注意的限制：
-
-- `README.md` 已提供從零建置流程。
-- `.env.example` 已包含 Laravel、Drone API、Ollama 的基本環境變數。
-- `composer.json`、`package.json`、migration 都已存在。
-- 目前尚未提供 `python_service/requirements.txt`，所以本 README 先提供手動 `pip install` 指令。
-- YOLO 權重檔不建議直接放進 Git，請依本 README 放到指定位置。
-- `resources/js/drone-monitor.js` 目前在 Blade 中被 `@vite` 載入，但 `vite.config.js` 的 input 尚未列入該檔；若 production build 或測試遇到 Vite manifest 錯誤，請參考「已知限制」章節。
-
-## 技術棧
-
-- Laravel 12 / PHP 8.2
-- Vite / Tailwind CSS / Blade
-- Python Flask / Flask-SocketIO
-- OpenCV / NumPy / Ultralytics YOLO
-- DJI Tello / `djitellopy`
-- SQLite 預設開發資料庫
-- MCP server
-- Ollama 本地模型
-
-## 系統架構
+Repository:
 
 ```text
-使用者
-  -> Laravel Blade Dashboard
-  -> Laravel API /api/drone/*
+https://github.com/Martin-ZW-Wang/rescue-drone-platform
+```
+
+## Features
+
+- Live drone video dashboard
+- DJI Tello / RoboMaster TT command proxy
+- Casualty detection and posture-assisted assessment
+- Incident review with original and AI-annotated evidence images
+- Local AI assistant named Sunny
+- Command Center Radio scan and channel recommendation
+- Optional OpenWrt dry-run VM for channel-hopping tests
+
+## Architecture
+
+```text
+Browser dashboard
+  -> Laravel Blade UI / Laravel API
   -> DroneService
-  -> Python Flask-SocketIO service :5001
-  -> Tello / OpenCV / YOLO SEG / Pose
-  -> Socket.IO frame/status/event 回傳前端
-  -> Python POST /api/events/ingest
-  -> Laravel RescueEvent
-  -> SQLite / database
-  -> Events 頁面與 MCP AI 摘要
+  -> Python Flask-SocketIO service on :5001
+  -> Tello / RoboMaster TT, OpenCV, YOLO SEG, YOLO Pose
+  -> Incident ingest API
+  -> SQLite rescue_events table
+  -> Incident Review and Sunny AI Assistant
+  -> Ollama and MCP tools
 ```
 
-主要角色分工：
+## Prerequisites
 
-- Laravel：Dashboard、事件頁面、API proxy、事件儲存、MCP AI 頁面。
-- Python service：Tello 連線、影像串流、YOLO/SEG/Pose 偵測、Socket.IO 推送。
-- MCP server：提供本地工具給 AI 使用，讀取 Laravel 的 drone status 與 rescue events。
-- Ollama：本地 LLM，用於事件摘要與問答。
+Install these tools first:
 
-## 目錄結構
-
-```text
-rescue-drone-platform/
-├─ app/                         Laravel Controller / Model / Service
-├─ config/                      Laravel 設定
-├─ database/                    migrations / factories / seeders
-├─ docs/                        專案說明與稽核文件
-├─ mcp_server/                  MCP tools server
-├─ ai_orchestrator/             MCP client / Ollama 測試腳本
-├─ python_service/              Flask-SocketIO drone service
-├─ resources/                   Blade / JS / CSS
-├─ routes/                      Laravel web/api routes
-├─ public/                      Laravel public entry
-├─ tests/                       Laravel tests
-├─ .env.example                 環境變數樣板
-├─ composer.json                PHP 依賴與啟動腳本
-├─ package.json                 Node/Vite 依賴
-└─ vite.config.js               Vite 設定
-```
-
-## 前置需求
-
-建議環境：
-
-- Windows 10/11 或 Linux/macOS
-- PHP 8.2+
+- PHP 8.2 or newer
 - Composer
-- Node.js 20+ 與 npm
-- Python 3.10+，建議 3.11 或 3.12
+- Node.js 20 or newer
+- npm
+- Python 3.10 to 3.12
 - SQLite PHP extension
-- Tello 無人機與 Tello Wi-Fi，若只測 Laravel 頁面可先不連
-- Ollama，若要使用 MCP AI 摘要功能
+- Git
+- Optional: Ollama for Sunny AI
+- Optional: Oracle VirtualBox for OpenWrt dry-run tests
+- Optional: DJI Tello / RoboMaster TT for live drone operation
 
-確認工具：
+Check your local versions:
 
 ```powershell
 php -v
@@ -91,372 +58,383 @@ composer --version
 node -v
 npm -v
 python --version
+git --version
 ```
 
-## 從零安裝
+## Fresh Setup
 
-### 1. 取得專案
+Clone the repository:
 
 ```powershell
-git clone <your-repo-url>
+git clone https://github.com/Martin-ZW-Wang/rescue-drone-platform.git
 cd rescue-drone-platform
 ```
 
-如果你是直接拿到資料夾，請進入專案根目錄：
-
-```powershell
-cd C:\xampp\htdocs\rescue-drone-platform
-```
-
-### 2. 安裝 Laravel 依賴
+Install PHP dependencies:
 
 ```powershell
 composer install
 ```
 
-### 3. 安裝 Node / Vite 依賴
+Install Node dependencies:
 
 ```powershell
 npm install
 ```
 
-### 4. 建立 Laravel 環境檔
+Create the Laravel environment file:
 
 ```powershell
 copy .env.example .env
 php artisan key:generate
 ```
 
-確認 `.env` 至少包含：
-
-```dotenv
-APP_URL=http://localhost
-DB_CONNECTION=sqlite
-DRONE_API_BASE=http://127.0.0.1:5001
-OLLAMA_BASE_URL=http://127.0.0.1:11434
-OLLAMA_MODEL=gemma3:4b
-QUEUE_CONNECTION=database
-CACHE_STORE=database
-SESSION_DRIVER=database
-```
-
-### 5. 建立 SQLite 資料庫
+Create the SQLite database and run migrations:
 
 ```powershell
 New-Item -ItemType File -Force database/database.sqlite
 php artisan migrate
 ```
 
-Linux/macOS 可用：
+On macOS/Linux:
 
 ```bash
 touch database/database.sqlite
 php artisan migrate
 ```
 
-### 6. 安裝 Python drone service 依賴
-
-目前專案尚未提供 `python_service/requirements.txt`。請先用以下指令安裝必要套件：
+Install Python drone-service dependencies:
 
 ```powershell
 python -m venv python_service/.venv
 python_service\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-pip install flask flask-cors flask-socketio opencv-python numpy requests ultralytics djitellopy
+pip install -r python_service/requirements.txt
 ```
 
-如果 PowerShell 阻擋啟動 venv，可改用：
-
-```powershell
-python_service\.venv\Scripts\python.exe -m pip install --upgrade pip
-python_service\.venv\Scripts\python.exe -m pip install flask flask-cors flask-socketio opencv-python numpy requests ultralytics djitellopy
-```
-
-建議後續將上述套件整理成：
-
-```text
-python_service/requirements.txt
-```
-
-### 7. 安裝 MCP / AI orchestrator 依賴
+Install MCP dependencies:
 
 ```powershell
 pip install -r mcp_server/requirements.txt
-pip install -r ai_orchestrator/requirements.txt
 ```
 
-如果使用剛才建立的 Python venv，請確認已啟用 venv 後再執行。
+Build the frontend once:
 
-### 8. 準備 YOLO 模型權重
+```powershell
+npm run build
+```
 
-模型權重通常不建議直接提交到 Git。請將必要權重放到以下位置：
+## Environment Configuration
+
+The default `.env.example` is ready for local development. Important values:
+
+```dotenv
+APP_URL=http://localhost
+DB_CONNECTION=sqlite
+
+DRONE_API_BASE=http://127.0.0.1:5001
+DRONE_CORS_ORIGINS=*
+LARAVEL_EVENT_INGEST_URL=http://127.0.0.1:8000/api/events/ingest
+
+TELLO_HOST=192.168.10.1
+TELLO_COMMAND_PORT=8889
+
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_MODEL=gemma3:4b
+
+RADIO_OPERATING_CHANNEL=6
+RADIO_SCAN_MAX_AGE_SEC=300
+RADIO_CONGESTION_WARN_SCORE=185
+RADIO_SOFTWARE_HOP_ENABLED=false
+
+OPENWRT_APPLY_ENABLED=false
+OPENWRT_HOST=192.168.1.1
+OPENWRT_USER=root
+OPENWRT_PORT=22
+OPENWRT_RADIO=radio0
+OPENWRT_DRY_RUN=false
+OPENWRT_SSH_KEY=
+```
+
+For VirtualBox OpenWrt dry-run, use local values like:
+
+```dotenv
+OPENWRT_APPLY_ENABLED=true
+OPENWRT_DRY_RUN=true
+OPENWRT_HOST=127.0.0.1
+OPENWRT_PORT=2222
+OPENWRT_USER=root
+OPENWRT_RADIO=radio0
+OPENWRT_SSH_KEY=C:\Users\user\.ssh\openwrt_dry_run
+```
+
+## Model Weights
+
+YOLO model weights are not committed to Git because they are large binary files.
+Place them manually in `python_service/`:
 
 ```text
 python_service/SEG6-2.pt
 python_service/yolov8n-pose.pt
 ```
 
-目前程式引用位置：
+The current code expects:
 
-- `python_service/drone.py` 的 `DETECT_MODEL_PATH = BASE_DIR / "SEG6-2.pt"`
-- `python_service/drone.py` 的 `POSE_MODEL_PATH = BASE_DIR / "yolov8n-pose.pt"`
+```text
+python_service/drone.py -> SEG6-2.pt
+python_service/drone.py -> yolov8n-pose.pt
+```
 
-若你從 GitHub 下載本專案但沒有模型權重，Python service 會在載入 YOLO 模型時失敗。建議將模型放在 GitHub Releases、雲端硬碟或 Git LFS，並在正式發佈時補上下載連結。
+Without these model files, the Python drone service can fail during startup
+because the models are loaded at import time.
 
-## 啟動方式
+## Running The Project
 
-### 方式 A：只啟動 Laravel + Vite
+### Option A: Laravel dashboard only
 
-適合先檢查 Laravel 頁面與基本前端。
+Use this for Laravel UI, routes, events pages, and frontend development:
 
 ```powershell
 composer dev
 ```
 
-預設會啟動：
+Open:
 
-- Laravel server：`http://127.0.0.1:8000`
-- Queue listener
-- Laravel pail logs
-- Vite dev server
+```text
+http://127.0.0.1:8000
+```
 
-### 方式 B：啟動完整 rescue drone stack
+### Option B: Full local drone stack
 
-適合完整開發流程。
+Use this when the Python drone service and MCP server should run together:
 
 ```powershell
 composer dev:drone
 ```
 
-這會同時啟動：
+This starts:
 
 ```text
-php artisan serve
+php artisan serve --host=0.0.0.0 --port=8000
 php artisan queue:listen --tries=1 --timeout=0
 npm run dev
 python python_service/drone_server.py
 python mcp_server/server.py
 ```
 
-服務關係：
-
-| 服務 | 預設位置 |
-|---|---|
-| Laravel | `http://127.0.0.1:8000` |
-| Python drone service | `http://127.0.0.1:5001` |
-| Ollama | `http://127.0.0.1:11434` |
-
-### 方式 C：分開啟動 Python service
-
-若你想分開除錯：
-
-```powershell
-python python_service/drone_server.py
-```
-
-Python service 預設啟動在：
+Open:
 
 ```text
-http://127.0.0.1:5001
+Dashboard: http://127.0.0.1:8000
+Python drone service: http://127.0.0.1:5001
 ```
 
-可檢查：
+### Option C: OpenWrt dry-run workflow
+
+Use this when a VirtualBox OpenWrt VM is configured and you want the app and VM to
+start together:
 
 ```powershell
-curl http://127.0.0.1:5001/status
+composer dev:drone:openwrt
 ```
 
-### 方式 D：啟動 MCP server
+The script:
+
+1. Finds `VBoxManage.exe`
+2. Starts the `OpenWrtDryRun` VM
+3. Waits for SSH on `OPENWRT_HOST:OPENWRT_PORT`
+4. Verifies the SSH key when available
+5. Runs `composer dev:drone`
+6. Attempts to stop the VM when the app exits
+
+If VirtualBox is installed somewhere else, set:
 
 ```powershell
-python mcp_server/server.py
+$env:VBOXMANAGE="C:\Program Files\Oracle\VirtualBox\VBoxManage.exe"
 ```
 
-手動測試 AI orchestrator：
+## Ollama / Sunny AI
 
-```powershell
-python ai_orchestrator/chat.py "摘要最近 10 筆救援事件"
-```
-
-## Ollama 設定
-
-如果要使用 MCP AI 摘要功能，請先安裝並啟動 Ollama，並準備 `.env` 中設定的模型。
-
-檢查模型：
-
-```powershell
-ollama list
-```
-
-如果使用預設模型：
+Install and start Ollama, then pull the configured model:
 
 ```powershell
 ollama pull gemma3:4b
+ollama list
 ```
 
-`.env` 預設：
+Sunny uses:
 
 ```dotenv
 OLLAMA_BASE_URL=http://127.0.0.1:11434
 OLLAMA_MODEL=gemma3:4b
 ```
 
-## 主要頁面
+Open Sunny:
 
-| 頁面 | 說明 |
-|---|---|
-| `/` | Drone Dashboard |
-| `/events` | 救援事件列表 |
-| `/events/{event}` | 救援事件詳情 |
-| `/mcp` | MCP AI 問答與摘要頁 |
-
-## API 摘要
-
-Drone API：
-
-| Method | Path | 說明 |
-|---|---|---|
-| GET | `/api/drone/status` | 取得 Python drone service 狀態 |
-| POST | `/api/drone/start` | 啟動 SEG 偵測 |
-| POST | `/api/drone/stop` | 停止 SEG 偵測 |
-| POST | `/api/drone/pose/start` | 啟動 Pose 輔助 |
-| POST | `/api/drone/pose/stop` | 停止 Pose 輔助 |
-| GET | `/api/drone/debug/seg` | 執行 SEG debug diagnostics |
-
-Event API：
-
-| Method | Path | 說明 |
-|---|---|---|
-| POST | `/api/events/ingest` | Python 偵測事件寫入 Laravel |
-| GET | `/api/events/recent` | 取得近期事件 |
-| GET | `/api/events/{event}` | 取得單筆事件 |
-
-MCP AI API：
-
-| Method | Path | 說明 |
-|---|---|---|
-| GET | `/api/mcp/status` | 取得 MCP AI 狀態 |
-| GET | `/api/mcp/events/recent` | 取得近期事件 |
-| POST | `/api/mcp/summarize` | 呼叫 Ollama 摘要/問答 |
-
-## 資料庫
-
-主要資料表：
-
-- `rescue_events`：儲存 Python 偵測到的救援事件。
-- `system_logs`：系統日誌資料表，目前程式碼中未明顯大量使用，可能是預留功能。
-- Laravel 預設：`users`、`cache`、`jobs` 等。
-
-重建資料庫：
-
-```powershell
-php artisan migrate:fresh
+```text
+http://127.0.0.1:8000/mcp
 ```
 
-如果需要 seed：
+## Tello / RoboMaster TT Operation
 
-```powershell
-php artisan db:seed
+For real drone operation:
+
+1. Connect the computer to the Tello / RoboMaster TT Wi-Fi network, or route the
+   Tello network through a supported router setup.
+2. Confirm the drone host is reachable:
+
+   ```powershell
+   ping 192.168.10.1
+   ```
+
+3. Start the full stack:
+
+   ```powershell
+   composer dev:drone
+   ```
+
+4. Open the dashboard and use the flight-control panel.
+
+Flight controls are intentionally guarded by state checks. Manual trim commands
+are ignored when the drone is not flying.
+
+## Radio / Channel Hopping
+
+The dashboard includes Command Center Radio:
+
+- Scan nearby 2.4 GHz channels
+- Recommend a less congested control channel
+- Require preflight scan before takeoff
+- Apply target channel through OpenWrt when configured
+
+OpenWrt router control requires a router that supports OpenWrt and SSH access.
+Do not flash firmware for a different router model.
+
+Related docs:
+
+```text
+docs/command-center-radio.md
+docs/robomaster-tt-lan-test.md
 ```
 
-## 測試與檢查
+## Routes
 
-PHP 語法檢查範例：
+Web routes:
+
+| Path | Purpose |
+| --- | --- |
+| `/` | Dashboard |
+| `/events` | Incident Review |
+| `/events/{event}` | Incident detail and visual evidence |
+| `/mcp` | Sunny local AI assistant |
+
+Drone API:
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/api/drone/status` | Read drone and service state |
+| GET | `/api/drone/errors` | Read command-center error catalog |
+| POST | `/api/drone/start` | Start casualty detection |
+| POST | `/api/drone/stop` | Stop casualty detection |
+| POST | `/api/drone/takeoff` | Take off |
+| POST | `/api/drone/land` | Land |
+| POST | `/api/drone/emergency` | Emergency stop |
+| POST | `/api/drone/sdk/reset` | Reset SDK state |
+| POST | `/api/drone/pose/start` | Enable posture assessment |
+| POST | `/api/drone/pose/stop` | Disable posture assessment |
+| POST | `/api/drone/radio/scan` | Scan radio channels |
+| POST | `/api/drone/radio/preflight` | Run preflight radio check |
+| POST | `/api/drone/radio/auto-hop` | Select or apply recommended channel |
+| POST | `/api/drone/radio/channel` | Apply selected channel |
+
+Event API:
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| POST | `/api/events/ingest` | Python service ingests detection event |
+| GET | `/api/events/recent` | Recent incidents |
+| GET | `/api/events/{event}` | Incident detail |
+
+MCP AI API:
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/api/mcp/status` | MCP, model, drone, and database status |
+| GET | `/api/mcp/events/recent` | Recent events for Sunny |
+| DELETE | `/api/mcp/events/clear` | Clear test incidents |
+| POST | `/api/mcp/summarize` | Ask Sunny for analysis |
+
+## Verification Commands
+
+Run these before pushing changes:
 
 ```powershell
 php -l app/Services/DroneService.php
 php -l routes/api.php
+php -l routes/web.php
+php -l resources/views/layouts/app.blade.php
+npm run build
+python -m py_compile python_service/drone_server.py python_service/drone.py python_service/drone_runtime.py python_service/radio_manager.py
 ```
 
-Laravel 測試：
+Laravel tests:
 
 ```powershell
 composer test
 ```
 
-前端 build：
+## Git Hygiene
 
-```powershell
-npm run build
-```
-
-Python 語法檢查：
-
-```powershell
-python -m py_compile python_service/drone_server.py python_service/drone.py python_service/drone_runtime.py
-```
-
-## Git 與大型檔案規則
-
-這個專案的 `.gitignore` 會排除：
+Do not commit:
 
 - `.env`
+- `.ssh/`
 - `vendor/`
 - `node_modules/`
-- `python_service/.venv/`
-- `__pycache__/`
-- `public/build/`
-- `storage/framework/`
-- `storage/logs/`
-- `database/database.sqlite`
-- `python_service/debug_outputs/`
-- `*.pt`, `*.pth`, `*.onnx`
+- Python virtual environments
+- SQLite databases
+- YOLO weights (`*.pt`, `*.onnx`, etc.)
+- OpenWrt VM images (`*.img`, `*.vdi`)
+- Generated rescue event images (`public/rescue-events/`)
 
-因此 clone 後需要自行安裝依賴、建立 `.env`、建立 SQLite DB、放置模型權重。
+Commit source code, migrations, docs, and configuration examples only.
 
-## 已知限制與待補強
+## Troubleshooting
 
-### 1. 缺少 `python_service/requirements.txt`
+### Laravel cannot find the SQLite database
 
-目前 README 已提供手動安裝指令，但正式上 GitHub 前建議新增：
-
-```text
-python_service/requirements.txt
+```powershell
+New-Item -ItemType File -Force database/database.sqlite
+php artisan migrate
 ```
 
-### 2. 模型權重沒有下載來源
+### Python service cannot import a package
 
-目前必要權重位置為：
+```powershell
+python_service\.venv\Scripts\Activate.ps1
+pip install -r python_service/requirements.txt
+```
+
+### Python service fails at YOLO startup
+
+Check that these files exist:
 
 ```text
 python_service/SEG6-2.pt
 python_service/yolov8n-pose.pt
 ```
 
-正式發佈時應補下載連結、版本、檔案大小與校驗方式。
+### Sunny does not answer
 
-### 3. Vite manifest 可能缺少 `drone-monitor.js`
-
-目前 `resources/views/layouts/app.blade.php` 載入：
-
-```php
-@vite(['resources/css/app.css', 'resources/js/app.js', 'resources/js/drone-monitor.js'])
+```powershell
+ollama list
+curl http://127.0.0.1:11434/api/tags
 ```
 
-但 `vite.config.js` 目前 input 只有：
+### OpenWrt SSH times out
 
-```js
-input: ['resources/css/app.css', 'resources/js/app.js']
+```powershell
+ssh root@127.0.0.1 -p 2222
 ```
 
-如果 `npm run build` 或測試環境遇到 manifest 找不到 `resources/js/drone-monitor.js`，可採用其中一種修法：
-
-1. 將 `resources/js/drone-monitor.js` 加進 `vite.config.js` input。
-2. 或在 `resources/js/app.js` import `./drone-monitor`，並讓 Blade 只載入 `app.js`。
-
-### 4. `/api/events/ingest` 尚未看到驗證機制
-
-若部署到非本機環境，建議加入 shared secret、token 或簽章，避免任意來源寫入假事件。
-
-### 5. Tello 硬體相依
-
-Python service 需要連線到 Tello Wi-Fi 才能取得實際影像串流。若沒有 Tello，Laravel 頁面仍可開啟，但 drone status / stream 會回報連線錯誤。
-
-## 後續建議
-
-- 新增 `python_service/requirements.txt`。
-- 新增 `docs/model-weights.md`，說明模型來源。
-- 新增 `docs/architecture.md`，放正式架構圖。
-- 新增 `docs/api.md`，整理 API payload。
-- 精選少量偵測成果圖片放到 `docs/screenshots/`，不要提交整包 debug output。
-- 將 `composer.json` 的 `name`、`description` 從 Laravel 預設值改成專案資訊。
+Then confirm `OPENWRT_HOST`, `OPENWRT_PORT`, and `OPENWRT_SSH_KEY` in `.env`.

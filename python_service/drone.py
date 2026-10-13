@@ -454,7 +454,7 @@ def update_track_decision(tid, conf, bbox, dbg):
     event = None
     if st["state"] == "Rescue Needed" and not st.get("event_emitted", False):
         msg = (
-            f"[RESCUE NEEDED] ID={tid} SEG={conf * 100:.0f}% "
+            f"[RESCUE NEEDED] ID={tid} InjuryDetection={conf * 100:.0f}% "
             f"evidence={st['evidence']} ratio={dbg.get('bbox_ratio')} "
             f"pose_valid={dbg.get('pose_valid')}"
         )
@@ -629,7 +629,7 @@ def _legacy_process_frame_grid_only(frame_bgr: np.ndarray):
 
         status = "OK"
         if pose_unclear:
-            status = "Pose Unclear"
+            status = "Posture Unclear"
         elif st["sus"] >= SUSPECT_THRESHOLD:
             status = "Suspected Injury"
         elif injured and st["sus"] > 0:
@@ -639,7 +639,7 @@ def _legacy_process_frame_grid_only(frame_bgr: np.ndarray):
         if st["rescue"] >= RESCUE_THRESHOLD:
             status = "Rescue Needed"
             if not st["printed"]:
-                msg = f"[RESCUE NEEDED] ID={tid} SEG={conf * 100:.0f}% ratio={dbg['bbox_ratio']} ang={dbg['torso_angle']}"
+                msg = f"[RESCUE NEEDED] ID={tid} InjuryDetection={conf * 100:.0f}% ratio={dbg['bbox_ratio']} ang={dbg['torso_angle']}"
                 print(msg)
                 st["printed"] = True
                 tracks[tid] = st
@@ -670,8 +670,8 @@ def _legacy_process_frame_grid_only(frame_bgr: np.ndarray):
 
 def process_frame(frame_bgr: np.ndarray):
     """
-    SEG is the primary injured-person recognition path.
-    Pose is auxiliary only and never rejects a positive SEG candidate.
+    Injured-target detection is the primary recognition path.
+    Posture assist is auxiliary only and never rejects a positive candidate.
     """
     global frame_counter
     frame_counter += 1
@@ -791,7 +791,7 @@ def overlay_infos(frame_bgr: np.ndarray, infos: list):
             color = (0, 0, 255)       # 紅
         elif status == "Suspected Injury":
             color = (0, 165, 255)     # 橘
-        elif status == "Pose Unclear":
+        elif status == "Posture Unclear":
             color = (255, 0, 255)     # 紫
         else:
             color = (255, 255, 0)     # 黃藍
@@ -802,7 +802,7 @@ def overlay_infos(frame_bgr: np.ndarray, infos: list):
             cv2.rectangle(out, (x1, y1), (x2, y2), color, 2)
             cv2.putText(
                 out,
-                f"ID{tid} {status} | SEG {conf_pct}%",
+                f"ID{tid} {status} | Injury {conf_pct}%",
                 (x1, max(0, y1 - 8)),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.6,
@@ -812,7 +812,7 @@ def overlay_infos(frame_bgr: np.ndarray, infos: list):
         else:
             cv2.putText(
                 out,
-                f"Pose {status}",
+                f"Posture {status}",
                 (x1, max(0, y1 - 8)),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.55,

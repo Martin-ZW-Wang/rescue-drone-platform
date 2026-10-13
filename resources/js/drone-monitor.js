@@ -1,9 +1,19 @@
 import { io } from 'socket.io-client';
 
+function defaultSocketBase() {
+    const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
+    const host = window.location.hostname || '127.0.0.1';
+    return `${protocol}//${host}:5001`;
+}
+
 const CONFIG = window.DRONE_CONFIG || {};
 const API_BASE = CONFIG.apiBase || '/api/drone';
-const SOCKET_BASE = CONFIG.socketBase || 'http://127.0.0.1:5001';
+const SOCKET_BASE = CONFIG.socketBase || defaultSocketBase();
 const CSRF_TOKEN = CONFIG.csrfToken || '';
+const FEATURE_LABELS = {
+    detection: 'Casualty detection',
+    posture: 'Posture assessment',
+};
 
 const statusText = document.getElementById('statusText');
 const debugText = document.getElementById('debugText');
@@ -25,7 +35,22 @@ const btnLand = document.getElementById('btnLand');
 const btnEmergency = document.getElementById('btnEmergency');
 const btnSdkReset = document.getElementById('btnSdkReset');
 const msgBox = document.getElementById('msgBox');
-
+const btnRadioScan = document.getElementById('btnRadioScan');
+const btnRadioPreflight = document.getElementById('btnRadioPreflight');
+const btnRadioAutoHop = document.getElementById('btnRadioAutoHop');
+const radioSummary = document.getElementById('radioSummary');
+const radioCurrentChannel = document.getElementById('radioCurrentChannel');
+const radioRecommendedChannel = document.getElementById('radioRecommendedChannel');
+const radioNetworkCount = document.getElementById('radioNetworkCount');
+const radioDetails = document.getElementById('radioDetails');
+const radioHopHint = document.getElementById('radioHopHint');
+const radioChannelSelect = document.getElementById('radioChannelSelect');
+const btnRadioChannelApply = document.getElementById('btnRadioChannelApply');
+const streamLiveBadge = document.getElementById('streamLiveBadge');
+const streamHostValue = document.getElementById('streamHostValue');
+const streamStateValue = document.getElementById('streamStateValue');
+const streamBatteryValue = document.getElementById('streamBatteryValue');
+const streamFlightValue = document.getElementById('streamFlightValue');
 const connectedValue = document.getElementById('connectedValue');
 const streamingValue = document.getElementById('streamingValue');
 const flyingValue = document.getElementById('flyingValue');
@@ -38,9 +63,10 @@ let lastObjectUrl = null;
 let renderingFrame = false;
 let hasAnyEvent = false;
 let flightActionInProgress = false;
+let lastDroneFlying = false;
 
-function setStatus(msg) {
-    if (statusText) statusText.textContent = msg;
+function setStatus(message) {
+    if (statusText) statusText.textContent = message;
 }
 
 function setValue(el, value, color = '') {
@@ -49,35 +75,249 @@ function setValue(el, value, color = '') {
     el.style.color = color || '#fff';
 }
 
+async function fetchJson(url, options = {}) {
+    const response = await fetch(url, {
+        ...options,
+        headers: {
+            Accept: 'application/json',
+            'X-CSRF-TOKEN': CSRF_TOKEN,
+            ...(options.headers || {}),
+        },
+    });
+
+    const data = await response.json().catch(async () => ({ raw: await response.text() }));
+    if (!response.ok) {
+        throw new Error(data?.error || data?.message || data?.raw || `HTTP ${response.status}`);
+    }
+
+    return data;
+}
+
+function formatAge(seconds) {
+    if (seconds === null || seconds === undefined) return 'never';
+    if (seconds < 60) return `${Math.round(seconds)}s ago`;
+    return `${Math.round(seconds / 60)}m ago`;
+}
+
+function normalizeRadioStatus(status) {
+    return status?.status && typeof status.status === 'object'
+        ? { ...status.status, ...status }
+        : status;
+}
+
+function setStreamOverlay(st, connected, streaming, flying, battery) {
+    if (streamLiveBadge) {
+        streamLiveBadge.textContent = streaming ? 'LIVE' : 'OFFLINE';
+        streamLiveBadge.classList.toggle('is-live', streaming);
+    }
+
+    if (streamHostValue) {
+        streamHostValue.textContent = `Tello host ${st.tello_host ?? 'N/A'}`;
+    }
+
+    if (streamStateValue) {
+        streamStateValue.textContent = connected
+            ? (streaming ? 'Live video streaming' : 'Connected, awaiting stream')
+            : 'Disconnected';
+    }
+
+    if (streamBatteryValue) {
+        streamBatteryValue.textContent = `Battery ${battery}%`;
+    }
+
+    if (streamFlightValue) {
+        streamFlightValue.textContent = flying ? 'In flight' : 'Grounded';
+    }
+}
+
+function setRadioBusy(isBusy) {
+    [btnRadioScan, btnRadioPreflight, btnRadioAutoHop].forEach((button) => {
+        if (button) button.disabled = isBusy;
+    });
+    if (radioChannelSelect) radioChannelSelect.disabled = isBusy;
+    if (btnRadioChannelApply) btnRadioChannelApply.disabled = isBusy;
+}
+
+function populateRadioChannelSelect(status) {
+    if (!radioChannelSelect || !status || typeof status !== 'object') return;
+
+    const selected = radioChannelSelect.value;
+    const supported = status.supported_channels || [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
+    const preferred = new Set(status.preferred_channels || [1, 6, 11]);
+    const congestion = status.congestion || {};
+    const recommended = status.recommended_channel;
+    const current = status.operating_channel;
+    const target = status.target_channel;
+    const networks = Array.isArray(status.networks) ? status.networks : [];
+    const observed = new Map();
+
+    networks.forEach((item) => {
+        if (item?.band !== '2.4GHz' || !item.channel) return;
+        const channel = Number(item.channel);
+        const info = observed.get(channel) || { count: 0, maxSignal: 0 };
+        info.count += 1;
+        info.maxSignal = Math.max(info.maxSignal, Number(item.signal || 0));
+        observed.set(channel, info);
+    });
+
+    radioChannelSelect.innerHTML = '';
+
+    supported.forEach((channel) => {
+        const ch = Number(channel);
+        const option = document.createElement('option');
+        const scanInfo = congestion[String(ch)] || {};
+        const seen = observed.get(ch);
+        const labels = [`CH ${ch}`];
+
+        if (ch === recommended) labels.push('Recommended');
+        if (ch === current) labels.push('Current');
+        if (ch === target) labels.push('Target');
+        if (preferred.has(ch)) labels.push('Preferred');
+
+        const networkCount = scanInfo.network_count ?? seen?.count ?? 0;
+        const maxSignal = scanInfo.max_signal ?? seen?.maxSignal ?? 0;
+        const score = scanInfo.score ?? 0;
+        labels.push(`${networkCount} networks`);
+        labels.push(`${maxSignal}% max`);
+        labels.push(`score ${score}`);
+
+        option.value = String(ch);
+        option.textContent = labels.join(' | ');
+        radioChannelSelect.appendChild(option);
+    });
+
+    const nextValue = selected || String(recommended || current || '');
+    if (nextValue && [...radioChannelSelect.options].some((option) => option.value === nextValue)) {
+        radioChannelSelect.value = nextValue;
+    }
+}
+
+function applyRadioStatus(status) {
+    status = normalizeRadioStatus(status);
+    if (!status || typeof status !== 'object') return;
+
+    const recommended = status.recommended_channel ?? status.status?.recommended_channel ?? '--';
+    const current = status.operating_channel ?? status.status?.operating_channel ?? '--';
+    const target = status.target_channel ?? status.status?.target_channel ?? null;
+    const count = status.network_count ?? status.status?.network_count ?? '--';
+    const age = formatAge(status.last_scan_age_sec ?? status.status?.last_scan_age_sec);
+    const mode = status.hop_mode ?? status.status?.hop_mode ?? 'monitor';
+    const lastError = status.last_error ?? status.status?.last_error ?? null;
+
+    setValue(radioCurrentChannel, current);
+    setValue(radioRecommendedChannel, recommended, recommended === current ? '#047857' : '#8f4b57');
+    setValue(radioNetworkCount, count);
+    populateRadioChannelSelect(status);
+
+    if (radioSummary) {
+        radioSummary.textContent = lastError
+            ? `Radio warning: ${lastError}`
+            : `Last scan: ${age} | mode: ${mode}${target ? ` | target: ${target}` : ''}`;
+    }
+
+    if (radioHopHint) {
+        if (mode === 'openwrt-applied') {
+            radioHopHint.textContent = `Router channel applied: CH ${current}`;
+        } else if (mode === 'pending-router-apply' && target) {
+            radioHopHint.textContent = `Target selected: CH ${target}. Apply this channel in the router 2.4 GHz settings to complete the hop.`;
+        } else {
+            radioHopHint.textContent = `Choose a 2.4 GHz control channel. Recommended: CH ${recommended}.`;
+        }
+    }
+
+    if (radioDetails) {
+        const congestion = status.congestion ?? status.status?.congestion ?? {};
+        const openwrt = status.openwrt ?? status.status?.openwrt ?? {};
+        const issues = status.issues ?? [];
+        const warning = status.warning ? [`warning: ${status.warning}`] : [];
+        const openwrtLines = Object.keys(openwrt).length
+            ? [`openwrt: enabled=${openwrt.enabled} configured=${openwrt.configured} host=${openwrt.host ?? 'N/A'} radio=${openwrt.radio ?? 'N/A'}`]
+            : [];
+        const issueLines = issues.map((item) => `${item.severity}: ${item.code} channel=${item.channel ?? 'N/A'} score=${item.score ?? 'N/A'}`);
+        const congestionLines = Object.values(congestion).map((item) => (
+            `ch${item.channel}: networks=${item.network_count} max_signal=${item.max_signal}% score=${item.score}`
+        ));
+
+        radioDetails.textContent = [...warning, ...openwrtLines, ...issueLines, ...congestionLines].join('\n') || 'No radio data';
+    }
+}
+
+async function loadRadioStatus() {
+    if (!radioSummary) return;
+
+    try {
+        const status = await fetchJson(`${API_BASE}/radio/status`, { method: 'GET' });
+        applyRadioStatus(status);
+    } catch (error) {
+        radioSummary.textContent = `Radio status failed: ${String(error?.message ?? error)}`;
+    }
+}
+
+async function runRadioAction(path, label, payload = null) {
+    setRadioBusy(true);
+    if (radioSummary) radioSummary.textContent = `${label}...`;
+
+    try {
+        const options = { method: 'POST' };
+        if (payload) {
+            options.headers = { 'Content-Type': 'application/json' };
+            options.body = JSON.stringify(payload);
+        }
+
+        const data = await fetchJson(`${API_BASE}/${path}`, options);
+        applyRadioStatus(data.status || data);
+        if (radioSummary) radioSummary.textContent = data.message || `${label} complete`;
+        await loadStatus();
+    } catch (error) {
+        if (radioSummary) radioSummary.textContent = `${label} failed: ${String(error?.message ?? error)}`;
+        if (radioDetails) radioDetails.textContent = String(error?.message ?? error);
+    } finally {
+        setRadioBusy(false);
+    }
+}
+
+async function runSelectedRadioChannel() {
+    const channel = Number(radioChannelSelect?.value);
+    if (!channel) {
+        if (radioSummary) radioSummary.textContent = 'Choose a channel first';
+        return;
+    }
+
+    await runRadioAction('radio/channel', `Switching to CH ${channel}`, { channel });
+}
+
 function explainDroneError(error) {
     if (!error || error === 'none') return 'none';
+    const value = String(error);
 
-    if (String(error).startsWith('PREFLIGHT_TELLO_TOO_HOT')) {
-        return 'Tello 內部溫度過高，請關機冷卻後再起飛';
+    if (value.startsWith('PREFLIGHT_TELLO_TOO_HOT')) {
+        return 'Tello internal temperature is too high. Power down and allow the aircraft to cool before takeoff.';
     }
 
-    if (String(error).startsWith('PREFLIGHT_BATTERY_LOW')) {
-        return 'Tello 電量低於安全起飛門檻，請先充電到 30% 以上';
+    if (value.startsWith('PREFLIGHT_BATTERY_LOW')) {
+        return 'Tello battery is below the safe takeoff threshold. Charge the battery above 30% before flight.';
     }
 
-    if (String(error).startsWith('TAKEOFF_UNVERIFIED')) {
-        return 'Tello 回覆起飛指令，但狀態未顯示離地；請檢查槳葉、底部感測器與官方 App 起飛';
+    if (value.startsWith('TAKEOFF_UNVERIFIED')) {
+        return 'Tello acknowledged takeoff, but airborne state was not verified. Check propellers, downward sensors, and takeoff behavior in the official app.';
     }
 
-    return error;
+    return value;
 }
 
 function setDebug(st) {
     if (!debugText) return;
 
     if (!st || typeof st !== 'object') {
-        debugText.textContent = '沒有狀態資料';
+        debugText.textContent = 'No status data';
         return;
     }
 
     const lines = [
         `error: ${st.error ?? 'none'}`,
         `battery: ${st.battery ?? 'N/A'}%`,
+        `tello_host: ${st.tello_host ?? 'N/A'}`,
+        `socket_base: ${SOCKET_BASE}`,
         `connected: ${st.connected}`,
         `streaming: ${st.streaming}`,
         `flying: ${st.flying}`,
@@ -88,8 +328,8 @@ function setDebug(st) {
         `yaw: ${st.tello_state?.yaw ?? 'N/A'}`,
         `temp: ${st.tello_state?.templ ?? 'N/A'}-${st.tello_state?.temph ?? 'N/A'}C`,
         `motors_time: ${st.tello_state?.time ?? 'N/A'}`,
-        `seg_enabled: ${st.seg_enabled ?? st.tracking}`,
-        `pose_enabled: ${st.pose_enabled}`,
+        `${FEATURE_LABELS.detection}: ${st.seg_enabled ?? st.tracking}`,
+        `${FEATURE_LABELS.posture}: ${st.pose_enabled}`,
         `out_size: ${st.out_size ?? 'N/A'}`,
         `stream_fps: ${st.stream_fps ?? 'N/A'}`,
         `proc_fps: ${st.proc_fps ?? 'N/A'}`,
@@ -97,40 +337,17 @@ function setDebug(st) {
         `last_det_count: ${st.last_det_count ?? 'N/A'}`,
         `no_det_streak: ${st.no_det_streak ?? 'N/A'}`,
         `jpeg_quality: ${st.jpeg_quality ?? 'N/A'}`,
+        `worker_threads: ${st.worker_threads ?? 'N/A'}`,
+        `worker_generation: ${st.worker_generation ?? 'N/A'}`,
     ];
 
     debugText.textContent = lines.join('\n');
 }
 
-async function fetchJson(url, options = {}) {
-    const defaultHeaders = {
-        'Accept': 'application/json',
-        'X-CSRF-TOKEN': CSRF_TOKEN,
-    };
-
-    const res = await fetch(url, {
-        ...options,
-        headers: {
-            ...defaultHeaders,
-            ...(options.headers || {}),
-        },
-    });
-
-    const data = await res.json().catch(async () => ({ raw: await res.text() }));
-
-    if (!res.ok) {
-        const err = data?.error || data?.message || data?.raw || `HTTP ${res.status}`;
-        throw new Error(err);
-    }
-
-    return data;
-}
-
 function appendMessage(evt) {
     if (!msgBox) return;
 
-    const dt = new Date((evt.ts || Date.now() / 1000) * 1000);
-    const tstr = dt.toLocaleTimeString();
+    const time = new Date((evt.ts || Date.now() / 1000) * 1000).toLocaleTimeString();
 
     if (!hasAnyEvent) {
         msgBox.innerHTML = '';
@@ -144,9 +361,9 @@ function appendMessage(evt) {
     div.style.padding = '10px 12px';
     div.style.marginBottom = '10px';
     div.innerHTML = `
-        <span style="display:inline-block;padding:2px 8px;border-radius:999px;background:#b91c1c;color:#fff;font-size:12px;margin-right:8px;">救援事件</span>
+        <span style="display:inline-block;padding:2px 8px;border-radius:999px;background:#b91c1c;color:#fff;font-size:12px;margin-right:8px;">Rescue Incident</span>
         ${evt.message || ''}
-        <span style="color:#94a3b8;font-size:12px;margin-left:8px;">${tstr}</span>
+        <span style="color:#94a3b8;font-size:12px;margin-left:8px;">${time}</span>
     `;
 
     msgBox.prepend(div);
@@ -157,45 +374,43 @@ function applyStatus(st) {
     const connected = !!st.connected;
     const streaming = !!st.streaming;
     const flying = !!st.flying;
+    lastDroneFlying = flying;
     const segEnabled = !!(st.seg_enabled ?? st.tracking);
     const poseEnabled = !!st.pose_enabled;
     const error = explainDroneError(st.error ?? 'none');
 
-    setStatus(`電池: ${battery}% | connected: ${connected} | streaming: ${streaming} | flying: ${flying} | SEG: ${segEnabled} | Pose: ${poseEnabled} | error: ${error}`);
+    setStatus(`Battery: ${battery}% | connected: ${connected} | streaming: ${streaming} | flying: ${flying} | ${FEATURE_LABELS.detection}: ${segEnabled} | ${FEATURE_LABELS.posture}: ${poseEnabled} | error: ${error}`);
 
-    setValue(connectedValue, connected ? '正常' : '未連線', connected ? '#10b981' : '#ef4444');
-    setValue(streamingValue, streaming ? '正常' : '未啟動', streaming ? '#10b981' : '#ef4444');
-    setValue(flyingValue, flying ? '飛行中' : '未起飛', flying ? '#f59e0b' : '#93c5fd');
-    setValue(segValue, segEnabled ? '偵測中' : '未開啟', segEnabled ? '#f59e0b' : '#93c5fd');
-    setValue(poseValue, poseEnabled ? '已開啟' : '未開啟', poseEnabled ? '#f59e0b' : '#93c5fd');
+    setValue(connectedValue, connected ? 'Operational' : 'Disconnected', connected ? '#047857' : '#dc2626');
+    setValue(streamingValue, streaming ? 'Operational' : 'Inactive', streaming ? '#047857' : '#dc2626');
+    setValue(flyingValue, flying ? 'In Flight' : 'Grounded', flying ? '#8f4b57' : '#63757d');
+    setValue(segValue, segEnabled ? 'Running' : 'Inactive', segEnabled ? '#8f4b57' : '#63757d');
+    setValue(poseValue, poseEnabled ? 'Enabled' : 'Disabled', poseEnabled ? '#8f4b57' : '#63757d');
 
-    let batteryColor = '#93c5fd';
+    let batteryColor = '#63757d';
     if (battery !== 'N/A') {
-        if (battery >= 50) batteryColor = '#10b981';
-        else if (battery >= 20) batteryColor = '#f59e0b';
-        else batteryColor = '#ef4444';
+        if (battery >= 50) batteryColor = '#047857';
+        else if (battery >= 20) batteryColor = '#8f4b57';
+        else batteryColor = '#dc2626';
     }
 
     setValue(batteryValue, `${battery}%`, batteryColor);
+    setStreamOverlay(st, connected, streaming, flying, battery);
+    applyRadioStatus(st.command_center?.radio);
 
     if (btnStop) btnStop.disabled = !segEnabled;
     if (btnStart) btnStart.disabled = segEnabled;
     if (btnTakeoff) btnTakeoff.disabled = !connected || flying;
-    if (btnNudgeUp) btnNudgeUp.disabled = !flying;
-    if (btnNudgeDown) btnNudgeDown.disabled = !flying;
-    if (btnNudgeForward) btnNudgeForward.disabled = !flying;
-    if (btnNudgeBack) btnNudgeBack.disabled = !flying;
-    if (btnNudgeLeft) btnNudgeLeft.disabled = !flying;
-    if (btnNudgeRight) btnNudgeRight.disabled = !flying;
-    if (btnNudgeYawLeft) btnNudgeYawLeft.disabled = !flying;
-    if (btnNudgeYawRight) btnNudgeYawRight.disabled = !flying;
+    [btnNudgeUp, btnNudgeDown, btnNudgeForward, btnNudgeBack, btnNudgeLeft, btnNudgeRight, btnNudgeYawLeft, btnNudgeYawRight].forEach((button) => {
+        if (button) button.disabled = !flying;
+    });
     if (btnLand) btnLand.disabled = !flying;
     if (btnEmergency) btnEmergency.disabled = false;
     if (btnSdkReset) btnSdkReset.disabled = flying;
     if (btnPose) {
-        btnPose.textContent = poseEnabled ? '關閉 Pose 輔助' : '開啟 Pose 輔助';
-        btnPose.style.background = poseEnabled ? '#64748b' : '#f59e0b';
-        btnPose.style.color = poseEnabled ? '#fff' : '#111827';
+        btnPose.textContent = poseEnabled ? `Disable ${FEATURE_LABELS.posture}` : `Enable ${FEATURE_LABELS.posture}`;
+        btnPose.style.background = poseEnabled ? '#cbd6d6' : '#d9857f';
+        btnPose.style.color = poseEnabled ? '#21313a' : '#271816';
     }
 
     setDebug(st);
@@ -203,17 +418,17 @@ function applyStatus(st) {
 
 async function loadStatus() {
     try {
-        const st = await fetchJson(`${API_BASE}/status`, { method: 'GET' });
-        applyStatus(st);
-    } catch (e) {
-        setStatus('狀態讀取失敗，請確認 Python drone_server 是否啟動');
-        if (debugText) debugText.textContent = String(e?.message ?? e);
+        const status = await fetchJson(`${API_BASE}/status`, { method: 'GET' });
+        applyStatus(status);
+    } catch (error) {
+        setStatus('Status retrieval failed. Confirm that the Python drone server is running.');
+        if (debugText) debugText.textContent = String(error?.message ?? error);
     }
 }
 
 function connectSocket() {
     if (socket) {
-        try { socket.disconnect(); } catch (e) {}
+        try { socket.disconnect(); } catch (error) {}
         socket = null;
     }
 
@@ -224,18 +439,16 @@ function connectSocket() {
     });
 
     socket.on('connect', () => {
-        setStatus('WebSocket 已連線，Tello 連線後即可起飛');
+        setStatus('WebSocket connected. The aircraft can take off after Tello link confirmation.');
         socket.emit('get_status');
     });
 
     socket.on('disconnect', () => {
-        setStatus('WebSocket 已中斷');
+        setStatus('WebSocket disconnected.');
     });
 
     socket.on('frame', (bin) => {
-        if (!streamEl) return;
-        if (renderingFrame) return;
-
+        if (!streamEl || renderingFrame) return;
         renderingFrame = true;
 
         try {
@@ -254,61 +467,52 @@ function connectSocket() {
                 lastObjectUrl = url;
                 renderingFrame = false;
             };
-        } catch (e) {
-            console.error(e);
+        } catch (error) {
+            console.error(error);
             renderingFrame = false;
         }
     });
 
-    socket.on('status', (st) => {
-        applyStatus(st);
-    });
-
-    socket.on('event', (evt) => {
-        appendMessage(evt);
-    });
+    socket.on('status', (status) => applyStatus(status));
+    socket.on('event', (event) => appendMessage(event));
 }
 
 async function startDrone() {
     if (btnStart) btnStart.disabled = true;
-    setStatus('SEG 偵測啟動中...');
+    setStatus(`${FEATURE_LABELS.detection} starting...`);
 
     try {
         const data = await fetchJson(`${API_BASE}/start`, { method: 'POST' });
-
-        if (!data.ok) {
-            throw new Error(data.error || 'START_FAILED');
-        }
-
-        setStatus(data.message || 'SEG 偵測已啟動');
+        if (!data.ok) throw new Error(data.error || 'START_FAILED');
+        setStatus(data.message || `${FEATURE_LABELS.detection} started.`);
         await loadStatus();
         socket?.emit('get_status');
-    } catch (e) {
+    } catch (error) {
         if (btnStart) btnStart.disabled = false;
-        setStatus('啟動失敗，請確認 Tello Wi-Fi、防火牆與 Python 服務');
-        if (debugText) debugText.textContent = String(e?.message ?? e);
+        setStatus('Startup failed. Check Tello Wi-Fi, firewall rules, and the Python service.');
+        if (debugText) debugText.textContent = String(error?.message ?? error);
     }
 }
 
 async function stopDrone() {
     if (btnStop) btnStop.disabled = true;
-    setStatus('停止 SEG 偵測中...');
+    setStatus(`Stopping ${FEATURE_LABELS.detection}...`);
 
     try {
         const data = await fetchJson(`${API_BASE}/stop`, { method: 'POST' });
-        setStatus(data.message || 'SEG 偵測已停止');
+        setStatus(data.message || `${FEATURE_LABELS.detection} stopped.`);
         await loadStatus();
         socket?.emit('get_status');
-    } catch (e) {
+    } catch (error) {
         if (btnStop) btnStop.disabled = false;
-        setStatus('停止失敗');
-        if (debugText) debugText.textContent = String(e?.message ?? e);
+        setStatus('Stop command failed.');
+        if (debugText) debugText.textContent = String(error?.message ?? error);
     }
 }
 
 async function runFlightAction(path, busyMessage, fallbackMessage) {
     if (flightActionInProgress) {
-        throw new Error('飛控指令處理中，請稍候');
+        throw new Error('A flight-control command is already in progress. Please wait.');
     }
 
     flightActionInProgress = true;
@@ -316,11 +520,7 @@ async function runFlightAction(path, busyMessage, fallbackMessage) {
 
     try {
         const data = await fetchJson(`${API_BASE}/${path}`, { method: 'POST' });
-
-        if (!data.ok) {
-            throw new Error(data.error || data.message || fallbackMessage);
-        }
-
+        if (!data.ok) throw new Error(data.error || data.message || fallbackMessage);
         applyStatus(data.status || data);
         socket?.emit('get_status');
         return data;
@@ -333,12 +533,12 @@ async function takeoffDrone() {
     if (btnTakeoff) btnTakeoff.disabled = true;
 
     try {
-        const data = await runFlightAction('takeoff', '起飛中，請保持周圍空曠...', 'TAKEOFF_FAILED');
-        setStatus(data.message || '起飛完成，無人機正在懸停');
+        const data = await runFlightAction('takeoff', 'Taking off. Keep the surrounding area clear...', 'TAKEOFF_FAILED');
+        setStatus(data.message || 'Takeoff complete. Aircraft is holding position.');
         await loadStatus();
-    } catch (e) {
-        setStatus(`起飛失敗：${String(e?.message ?? e)}`);
-        if (debugText) debugText.textContent = String(e?.message ?? e);
+    } catch (error) {
+        setStatus(`Takeoff failed: ${String(error?.message ?? error)}`);
+        if (debugText) debugText.textContent = String(error?.message ?? error);
         await loadStatus();
     }
 }
@@ -347,27 +547,18 @@ async function landDrone() {
     if (btnLand) btnLand.disabled = true;
 
     try {
-        const data = await runFlightAction('land', '降落中...', 'LAND_FAILED');
-        setStatus(data.message || '降落完成');
+        const data = await runFlightAction('land', 'Landing...', 'LAND_FAILED');
+        setStatus(data.message || 'Landing complete.');
         await loadStatus();
-    } catch (e) {
-        setStatus(`降落失敗：${String(e?.message ?? e)}`);
-        if (debugText) debugText.textContent = String(e?.message ?? e);
+    } catch (error) {
+        setStatus(`Landing failed: ${String(error?.message ?? error)}`);
+        if (debugText) debugText.textContent = String(error?.message ?? error);
         await loadStatus();
     }
 }
 
 async function nudgeVertical(path, label) {
-    const nudgeButtons = [
-        btnNudgeUp,
-        btnNudgeDown,
-        btnNudgeForward,
-        btnNudgeBack,
-        btnNudgeLeft,
-        btnNudgeRight,
-        btnNudgeYawLeft,
-        btnNudgeYawRight,
-    ];
+    const nudgeButtons = [btnNudgeUp, btnNudgeDown, btnNudgeForward, btnNudgeBack, btnNudgeLeft, btnNudgeRight, btnNudgeYawLeft, btnNudgeYawRight];
     nudgeButtons.forEach((button) => {
         if (button) button.disabled = true;
     });
@@ -376,57 +567,29 @@ async function nudgeVertical(path, label) {
         const data = await runFlightAction(path, `${label}...`, 'NUDGE_FAILED');
         setStatus(data.message || `${label} complete`);
         await loadStatus();
-    } catch (e) {
-        setStatus(`${label} failed: ${String(e?.message ?? e)}`);
-        if (debugText) debugText.textContent = String(e?.message ?? e);
+    } catch (error) {
+        setStatus(`${label} failed: ${String(error?.message ?? error)}`);
+        if (debugText) debugText.textContent = String(error?.message ?? error);
         await loadStatus();
+    } finally {
+        nudgeButtons.forEach((button) => {
+            if (button) button.disabled = !lastDroneFlying;
+        });
     }
 }
 
-async function nudgeUpDrone() {
-    await nudgeVertical('nudge/up', 'Nudge up');
-}
-
-async function nudgeDownDrone() {
-    await nudgeVertical('nudge/down', 'Nudge down');
-}
-
-async function nudgeForwardDrone() {
-    await nudgeVertical('nudge/forward', 'Nudge forward');
-}
-
-async function nudgeBackDrone() {
-    await nudgeVertical('nudge/back', 'Nudge back');
-}
-
-async function nudgeLeftDrone() {
-    await nudgeVertical('nudge/left', 'Nudge left');
-}
-
-async function nudgeRightDrone() {
-    await nudgeVertical('nudge/right', 'Nudge right');
-}
-
-async function nudgeYawLeftDrone() {
-    await nudgeVertical('nudge/yaw-left', 'Yaw left');
-}
-
-async function nudgeYawRightDrone() {
-    await nudgeVertical('nudge/yaw-right', 'Yaw right');
-}
-
 async function emergencyStopDrone() {
-    if (!window.confirm('確定要送出緊急停止指令嗎？這會立即停止 Tello 馬達。')) {
+    if (!window.confirm('Send the emergency stop command? This immediately stops the Tello motors.')) {
         return;
     }
 
     try {
-        const data = await runFlightAction('emergency', '送出緊急停止指令...', 'EMERGENCY_FAILED');
-        setStatus(data.message || '緊急停止指令已送出');
+        const data = await runFlightAction('emergency', 'Sending emergency stop command...', 'EMERGENCY_FAILED');
+        setStatus(data.message || 'Emergency stop command sent.');
         await loadStatus();
-    } catch (e) {
-        setStatus(`緊急停止失敗：${String(e?.message ?? e)}`);
-        if (debugText) debugText.textContent = String(e?.message ?? e);
+    } catch (error) {
+        setStatus(`Emergency stop failed: ${String(error?.message ?? error)}`);
+        if (debugText) debugText.textContent = String(error?.message ?? error);
         await loadStatus();
     }
 }
@@ -435,12 +598,12 @@ async function resetSdk() {
     if (btnSdkReset) btnSdkReset.disabled = true;
 
     try {
-        const data = await runFlightAction('sdk/reset', '重置 Tello SDK 連線...', 'SDK_RESET_FAILED');
-        setStatus(data.message || 'SDK 已重置');
+        const data = await runFlightAction('sdk/reset', 'Resetting Tello SDK link...', 'SDK_RESET_FAILED');
+        setStatus(data.message || 'SDK link reset.');
         await loadStatus();
-    } catch (e) {
-        setStatus(`SDK 重置失敗：${String(e?.message ?? e)}`);
-        if (debugText) debugText.textContent = String(e?.message ?? e);
+    } catch (error) {
+        setStatus(`SDK reset failed: ${String(error?.message ?? error)}`);
+        if (debugText) debugText.textContent = String(error?.message ?? error);
         await loadStatus();
     }
 }
@@ -452,76 +615,57 @@ async function togglePose() {
         const current = await fetchJson(`${API_BASE}/status`, { method: 'GET' });
         const nextPath = current.pose_enabled ? 'pose/stop' : 'pose/start';
         const data = await fetchJson(`${API_BASE}/${nextPath}`, { method: 'POST' });
-
-        if (!data.ok) {
-            throw new Error(data.error || 'POSE_TOGGLE_FAILED');
-        }
-
+        if (!data.ok) throw new Error(data.error || 'POSE_TOGGLE_FAILED');
         await loadStatus();
         socket?.emit('get_status');
-    } catch (e) {
-        setStatus(`Pose 輔助切換失敗：${String(e?.message ?? e)}`);
-        if (debugText) debugText.textContent = String(e?.message ?? e);
+    } catch (error) {
+        setStatus(`${FEATURE_LABELS.posture} toggle failed: ${String(error?.message ?? error)}`);
+        if (debugText) debugText.textContent = String(error?.message ?? error);
     } finally {
         if (btnPose) btnPose.disabled = false;
     }
 }
 
 function reloadSocket() {
-    setStatus('重新連線 WebSocket...');
+    setStatus('Reconnecting WebSocket...');
     connectSocket();
-}
-
-function placeManualFlightPanel() {
-    const panel = document.getElementById('manualFlightPanel');
-    if (!panel || !statusText) return;
-
-    panel.classList.remove('panel');
-    panel.style.marginTop = '16px';
-
-    const panelHead = panel.querySelector('.panel-head');
-    if (panelHead) panelHead.style.display = 'none';
-
-    const panelBody = panel.querySelector('.panel-body');
-    if (panelBody) {
-        panelBody.style.padding = '0';
-        panelBody.style.border = '0';
-    }
-
-    statusText.insertAdjacentElement('afterend', panel);
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
     if (!document.getElementById('stream')) return;
-
-    placeManualFlightPanel();
 
     btnStart?.addEventListener('click', startDrone);
     btnStop?.addEventListener('click', stopDrone);
     btnPose?.addEventListener('click', togglePose);
     btnReload?.addEventListener('click', reloadSocket);
     btnTakeoff?.addEventListener('click', takeoffDrone);
-    btnNudgeUp?.addEventListener('click', nudgeUpDrone);
-    btnNudgeDown?.addEventListener('click', nudgeDownDrone);
-    btnNudgeForward?.addEventListener('click', nudgeForwardDrone);
-    btnNudgeBack?.addEventListener('click', nudgeBackDrone);
-    btnNudgeLeft?.addEventListener('click', nudgeLeftDrone);
-    btnNudgeRight?.addEventListener('click', nudgeRightDrone);
-    btnNudgeYawLeft?.addEventListener('click', nudgeYawLeftDrone);
-    btnNudgeYawRight?.addEventListener('click', nudgeYawRightDrone);
+    btnNudgeUp?.addEventListener('click', () => nudgeVertical('nudge/up', 'Nudge up'));
+    btnNudgeDown?.addEventListener('click', () => nudgeVertical('nudge/down', 'Nudge down'));
+    btnNudgeForward?.addEventListener('click', () => nudgeVertical('nudge/forward', 'Nudge forward'));
+    btnNudgeBack?.addEventListener('click', () => nudgeVertical('nudge/back', 'Nudge backward'));
+    btnNudgeLeft?.addEventListener('click', () => nudgeVertical('nudge/left', 'Nudge left'));
+    btnNudgeRight?.addEventListener('click', () => nudgeVertical('nudge/right', 'Nudge right'));
+    btnNudgeYawLeft?.addEventListener('click', () => nudgeVertical('nudge/yaw-left', 'Yaw left'));
+    btnNudgeYawRight?.addEventListener('click', () => nudgeVertical('nudge/yaw-right', 'Yaw right'));
     btnLand?.addEventListener('click', landDrone);
     btnEmergency?.addEventListener('click', emergencyStopDrone);
     btnSdkReset?.addEventListener('click', resetSdk);
+    btnRadioScan?.addEventListener('click', () => runRadioAction('radio/scan', 'Radio scan'));
+    btnRadioPreflight?.addEventListener('click', () => runRadioAction('radio/preflight', 'Radio preflight'));
+    btnRadioAutoHop?.addEventListener('click', () => runRadioAction('radio/auto-hop', 'Auto hop'));
+    btnRadioChannelApply?.addEventListener('click', runSelectedRadioChannel);
 
     connectSocket();
     await loadStatus();
+    await loadRadioStatus();
 
     setInterval(loadStatus, 5000);
+    setInterval(loadRadioStatus, 15000);
 });
 
 window.addEventListener('beforeunload', () => {
     if (lastObjectUrl) URL.revokeObjectURL(lastObjectUrl);
     if (socket) {
-        try { socket.disconnect(); } catch (e) {}
+        try { socket.disconnect(); } catch (error) {}
     }
 });

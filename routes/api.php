@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\McpAiController;
 
 Route::prefix('drone')->group(function () {
     Route::get('/status', [DroneApiController::class, 'status']);
+    Route::get('/errors', [DroneApiController::class, 'errors']);
     Route::post('/start', [DroneApiController::class, 'start']);
     Route::post('/stop', [DroneApiController::class, 'stop']);
     Route::post('/takeoff', [DroneApiController::class, 'takeoff']);
@@ -26,6 +27,11 @@ Route::prefix('drone')->group(function () {
     Route::post('/pose/start', [DroneApiController::class, 'startPose']);
     Route::post('/pose/stop', [DroneApiController::class, 'stopPose']);
     Route::get('/debug/seg', [DroneApiController::class, 'debugSeg']);
+    Route::get('/radio/status', [DroneApiController::class, 'radioStatus']);
+    Route::post('/radio/scan', [DroneApiController::class, 'radioScan']);
+    Route::post('/radio/preflight', [DroneApiController::class, 'radioPreflight']);
+    Route::post('/radio/auto-hop', [DroneApiController::class, 'radioAutoHop']);
+    Route::post('/radio/channel', [DroneApiController::class, 'radioChannel']);
 });
 
 Route::post('/events/ingest', [EventIngestController::class, 'store']);

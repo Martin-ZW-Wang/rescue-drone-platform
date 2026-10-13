@@ -25,6 +25,7 @@ class McpAiController extends Controller
     {
         $drone = null;
         $droneError = null;
+        $latestEventTime = RescueEvent::query()->latest('event_time')->value('event_time');
 
         try {
             $drone = $this->droneService->getStatus();
@@ -36,6 +37,12 @@ class McpAiController extends Controller
             'ok' => true,
             'model' => config('services.ollama.model', 'gemma3:4b'),
             'ollama_base' => config('services.ollama.base_url', 'http://127.0.0.1:11434'),
+            'db' => [
+                'connection' => config('database.default'),
+                'database' => config('database.connections.' . config('database.default') . '.database'),
+                'event_count' => RescueEvent::query()->count(),
+                'latest_event_time' => $latestEventTime ? Carbon::parse($latestEventTime)->format('Y-m-d H:i:s') : null,
+            ],
             'tools' => [
                 'get_drone_status',
                 'get_recent_events',
@@ -69,7 +76,7 @@ class McpAiController extends Controller
 
         return response()->json([
             'ok' => true,
-            'message' => 'Test events cleared',
+            'message' => 'Test incidents cleared',
             'deleted' => $deleted,
         ]);
     }
@@ -87,10 +94,12 @@ class McpAiController extends Controller
         $limit = $data['limit'] ?? 10;
         $since = isset($data['since']) ? $this->parseSince($data['since']) : null;
         $events = $this->events($limit, $since);
-        $question = trim($data['question'] ?? '請摘要目前救援事件。');
+        $question = trim($data['question'] ?? 'Summarize the current rescue incidents.');
 
         if ($question === '') {
-            $question = $mode === 'web' ? '請查詢最新資料並整理重點。' : '請摘要目前救援事件。';
+            $question = $mode === 'web'
+                ? 'Search current sources and summarize the key points.'
+                : 'Summarize the current rescue incidents.';
         }
 
         if ($mode === 'web') {
@@ -101,18 +110,13 @@ class McpAiController extends Controller
                     'ok' => true,
                     'mode' => 'web',
                     'model' => config('services.ollama.model', 'gemma3:4b'),
-                    'summary' => "目前沒有取得可用的網路來源。\n\n請確認這台電腦可以連上網路，或把問題改得更具體再查一次。",
+                    'summary' => "No usable web sources were retrieved.\n\nCheck network connectivity or try a more specific query.",
                     'events' => $events,
                     'sources' => [],
                 ]);
             }
 
-            return $this->askLocalModel(
-                $this->buildWebPrompt($question, $sources),
-                $events,
-                'web',
-                $sources
-            );
+            return $this->askLocalModel($this->buildWebPrompt($question, $sources), $events, 'web', $sources);
         }
 
         if ($mode === 'general') {
@@ -123,7 +127,7 @@ class McpAiController extends Controller
             return response()->json([
                 'ok' => true,
                 'model' => config('services.ollama.model', 'gemma3:4b'),
-                'summary' => "目前 MCP AI 工具中心主要連接了救援事件、無人機狀態與本地摘要工具。\n\n你的問題看起來不是救援事件分析。如果要查網路資料，請切換到「網路查詢」。",
+                'summary' => "The MCP AI center is currently connected to rescue incidents, drone status, and local analysis tools.\n\nYour question does not appear to be about incident analysis. Switch to Web Research for public-source queries.",
                 'events' => $events,
                 'mode' => 'rescue',
                 'sources' => [],
@@ -195,12 +199,21 @@ class McpAiController extends Controller
             ->get()
             ->map(fn (RescueEvent $event) => [
                 'id' => $event->id,
+                'display_number' => $this->displayNumberFor($event),
                 'event_type' => $event->event_type,
                 'status' => $event->status,
+                'status_label' => $this->statusLabel($event->status),
+                'tid' => $event->tid,
+                'track_label' => $this->trackLabel($event->tid),
                 'conf' => $event->conf,
+                'confidence_label' => $this->confidenceLabel($event->conf),
                 'message' => $event->message,
                 'event_time' => optional($event->event_time)->format('Y-m-d H:i:s'),
-                'review_status' => $event->review_status,
+                'review_status' => $event->review_status ?: 'pending',
+                'review_label' => $this->reviewLabel($event->review_status),
+                'detail_url' => route('events.show', $event),
+                'original_image_path' => $event->original_image_path,
+                'annotated_image_path' => $event->annotated_image_path,
             ])
             ->all();
     }
@@ -216,6 +229,159 @@ class McpAiController extends Controller
         } catch (Throwable) {
             return null;
         }
+    }
+
+    private function displayNumberFor(RescueEvent $event): int
+    {
+        $createdAt = $event->created_at;
+
+        if ($createdAt === null) {
+            return RescueEvent::query()
+                ->where('id', '>', $event->id)
+                ->count() + 1;
+        }
+
+        return RescueEvent::query()
+            ->where(function ($query) use ($event, $createdAt) {
+                $query->where('created_at', '>', $createdAt)
+                    ->orWhere(function ($query) use ($event, $createdAt) {
+                        $query->where('created_at', $createdAt)
+                            ->where('id', '>', $event->id);
+                    });
+            })
+            ->count() + 1;
+    }
+
+    private function buildWebPrompt(string $question, array $sources): string
+    {
+        $sourceText = collect(array_slice($sources, 0, self::WEB_SOURCE_LIMIT))
+            ->map(function (array $source) {
+                $content = trim($source['content'] ?: $source['snippet']);
+                $content = mb_substr($content, 0, self::WEB_EXCERPT_CHARS);
+
+                return "[{$source['id']}] {$source['title']}\nURL: {$source['url']}\nSnippet: {$source['snippet']}\nExcerpt: {$content}";
+            })
+            ->implode("\n\n");
+
+        return <<<PROMPT
+You are Sunny, the local AI assistant for a rescue-drone command center. Answer in professional English using only traceable source material when discussing external information.
+
+User question:
+{$question}
+
+Web sources:
+{$sourceText}
+
+Respond with concise bullets or short paragraphs. Cite important claims with source numbers such as [1] or [2]. If the sources are insufficient, state the limitation explicitly.
+PROMPT;
+    }
+
+    private function buildRescuePrompt(string $question, array $events): string
+    {
+        $payload = json_encode($events, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+
+        return <<<PROMPT
+You are Sunny, the local AI assistant for an intelligent rescue-drone command center. Analyze the rescue-incident JSON and focus on operational risk, response priority, and next actions.
+
+User question:
+{$question}
+
+Rescue incident JSON:
+{$payload}
+
+Answer in professional English and include:
+1. Incident overview
+2. High-risk or attention-required incident IDs
+3. Target ID, confidence, and operator disposition
+4. Recommended next actions for the operator
+5. If an incident has detail_url, remind the operator that the detail page contains original and AI-annotated visual evidence
+PROMPT;
+    }
+
+    private function buildGeneralPrompt(string $question): string
+    {
+        return <<<PROMPT
+You are Sunny, the local AI assistant for an intelligent rescue-drone platform. Answer in professional English, clearly and concisely.
+
+User question:
+{$question}
+PROMPT;
+    }
+
+    private function isRescueEventQuestion(string $question): bool
+    {
+        $keywords = [
+            'rescue',
+            'incident',
+            'casualty',
+            'detection',
+            'posture',
+            'risk',
+            'confidence',
+            'review',
+            'target',
+            'drone',
+            'summary',
+            'status',
+            'operator',
+            'evidence',
+        ];
+
+        $lowered = strtolower($question);
+
+        foreach ($keywords as $keyword) {
+            if (str_contains($lowered, $keyword)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function statusLabel(?string $status): string
+    {
+        return match ($status) {
+            'Rescue Needed' => 'Rescue Required',
+            'Suspected Injury' => 'Suspected Casualty',
+            'Detected Injury' => 'Casualty Detected',
+            'Posture Unclear', 'Pose Unclear' => 'Posture Unclear',
+            'OK' => 'No Abnormality Detected',
+            default => $status ?: 'Unknown Status',
+        };
+    }
+
+    private function reviewLabel(?string $review): string
+    {
+        return match ($review ?: 'pending') {
+            'pending' => 'Pending Review',
+            'reviewed' => 'Confirmed',
+            'dismissed' => 'Dismissed',
+            default => $review ?: 'Pending Review',
+        };
+    }
+
+    private function confidenceLabel(mixed $confidence): string
+    {
+        if ($confidence === null || $confidence === '') {
+            return '--';
+        }
+
+        $value = (float) $confidence;
+        return round($value <= 1 ? $value * 100 : $value) . '%';
+    }
+
+    private function trackLabel(mixed $tid): string
+    {
+        $value = trim((string) $tid);
+        if ($value === '') {
+            return 'Unassigned';
+        }
+
+        $value = trim($value, " \t\n\r\0\x0B()");
+        $value = preg_replace('/\s*,\s*/', '-', $value) ?? $value;
+        $value = preg_replace('/\s+/', '-', $value) ?? $value;
+
+        return 'Target #' . $value;
     }
 
     private function webSearch(string $query, int $limit = self::WEB_SOURCE_LIMIT): array
@@ -357,98 +523,6 @@ class McpAiController extends Controller
         }
 
         return mb_substr($text, 0, $maxLength);
-    }
-
-    private function buildWebPrompt(string $question, array $sources): string
-    {
-        $sourceText = collect(array_slice($sources, 0, self::WEB_SOURCE_LIMIT))
-            ->map(function (array $source) {
-                $content = trim($source['content'] ?: $source['snippet']);
-                $content = mb_substr($content, 0, self::WEB_EXCERPT_CHARS);
-
-                return "[{$source['id']}] {$source['title']}\nURL: {$source['url']}\n摘要: {$source['snippet']}\n內容摘錄: {$content}";
-            })
-            ->implode("\n\n");
-
-        return <<<PROMPT
-你是本地端 AI 助手。請只根據下列網路來源回答，不要假裝知道來源沒有提供的資訊。
-
-使用者問題：
-{$question}
-
-網路來源：
-{$sourceText}
-
-回答規則：
-1. 使用繁體中文。
-2. 先給簡短結論，再列重點。
-3. 重要句子後面加上來源編號，例如 [1]、[2]。
-4. 最後加入「來源整理」，逐條列出來源標題與網址。
-5. 如果來源不足，請明確說明不足，不要自行編造。
-PROMPT;
-    }
-
-    private function buildRescuePrompt(string $question, array $events): string
-    {
-        $payload = json_encode($events, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
-
-        return <<<PROMPT
-你是智慧救援無人機指揮中心的本地 AI 助手。請根據救援事件 JSON 回答，重點放在現場風險、優先順序與下一步行動。
-
-使用者問題：
-{$question}
-
-救援事件 JSON：
-{$payload}
-
-請用繁體中文回答：
-1. 重點摘要
-2. 高風險或需要注意的事件
-3. 建議下一步
-PROMPT;
-    }
-
-    private function buildGeneralPrompt(string $question): string
-    {
-        return <<<PROMPT
-你是本地端繁體中文 AI 助手。請用清楚、簡短、可執行的方式回答。
-
-限制：
-- 你目前不能保證知道即時外部資料。
-- 如果問題需要最新資料，請提醒使用者切換到「網路查詢」。
-
-使用者問題：
-{$question}
-PROMPT;
-    }
-
-    private function isRescueEventQuestion(string $question): bool
-    {
-        $keywords = [
-            '救援',
-            '事件',
-            '無人機',
-            '偵測',
-            '受傷',
-            '風險',
-            '狀態',
-            'rescue',
-            'event',
-            'drone',
-            'summary',
-            'risk',
-            'status',
-        ];
-
-        $lowered = strtolower($question);
-
-        foreach ($keywords as $keyword) {
-            if (str_contains($lowered, strtolower($keyword))) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private function normalizeDuckDuckGoUrl(string $url): string

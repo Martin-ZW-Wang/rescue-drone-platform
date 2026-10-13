@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import threading
 from dataclasses import dataclass
 from time import sleep
@@ -26,7 +27,9 @@ class DroneRuntime:
     """
     def __init__(self) -> None:
         self._lock = threading.RLock()
-        self._tello = Tello()
+        self._host = os.environ.get("TELLO_HOST", "192.168.10.1").strip() or "192.168.10.1"
+        self._command_port = int(os.environ.get("TELLO_COMMAND_PORT", "8889"))
+        self._tello = Tello(host=self._host)
         self._state = DroneState()
         self._battery_thread: Optional[threading.Thread] = None
         self._hover_thread: Optional[threading.Thread] = None
@@ -38,6 +41,14 @@ class DroneRuntime:
     @property
     def state(self) -> DroneState:
         return self._state
+
+    @property
+    def host(self) -> str:
+        return self._host
+
+    @property
+    def command_port(self) -> int:
+        return self._command_port
 
     def connect(self) -> bool:
         with self._lock:

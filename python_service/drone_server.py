@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
 import time
 import threading
 from collections import deque
-from queue import Full, Queue
+from pathlib import Path
+from queue import Empty, Full, Queue
 
 import cv2
 import numpy as np
@@ -12,25 +14,41 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 
+from command_center_errors import describe_error, error_payload
 from drone_runtime import DroneRuntime
 from drone import get_pose_enabled, overlay_infos, process_frame, run_seg_diagnostics, set_pose_enabled
+from radio_manager import RadioManager
 
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": ["http://127.0.0.1:8000", "http://localhost:8000"]}})
+
+
+def _cors_origins():
+    raw = os.environ.get("DRONE_CORS_ORIGINS", "*").strip()
+    if raw == "*":
+        return "*"
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+
+DRONE_CORS_ORIGINS = _cors_origins()
+CORS(app, resources={r"/*": {"origins": DRONE_CORS_ORIGINS}})
 
 socketio = SocketIO(
     app,
-    cors_allowed_origins=["http://127.0.0.1:8000", "http://localhost:8000"],
+    cors_allowed_origins=DRONE_CORS_ORIGINS,
     async_mode="threading",
 )
 
 runtime = DroneRuntime()
+radio_manager = RadioManager()
 
 # =========================
 # Laravel event ingest
 # =========================
-LARAVEL_EVENT_INGEST_URL = "http://127.0.0.1:8000/api/events/ingest"
+LARAVEL_EVENT_INGEST_URL = os.environ.get("LARAVEL_EVENT_INGEST_URL", "http://127.0.0.1:8000/api/events/ingest")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+EVENT_IMAGE_DIR = PROJECT_ROOT / "public" / "rescue-events"
+EVENT_IMAGE_URL_PREFIX = "/rescue-events"
 
 # =========================
 # Performance knobs
@@ -77,6 +95,40 @@ _event_save_queue = Queue(maxsize=100)
 
 _started = False
 _stop = threading.Event()
+_worker_threads = []
+_worker_generation = 0
+
+
+def _active_worker_count() -> int:
+    return sum(1 for thread in _worker_threads if thread.is_alive())
+
+
+def _worker_active(generation: int) -> bool:
+    return generation == _worker_generation and not _stop.is_set()
+
+
+def _start_worker(target, generation: int) -> None:
+    thread = threading.Thread(target=target, args=(generation,), daemon=True)
+    thread.start()
+    _worker_threads.append(thread)
+
+
+def _stop_workers(timeout_sec: float = 1.0) -> None:
+    global _started, _worker_generation, _worker_threads
+
+    _worker_generation += 1
+    _stop.set()
+
+    deadline = time.time() + timeout_sec
+    for thread in list(_worker_threads):
+        remaining = max(0.0, deadline - time.time())
+        if remaining <= 0:
+            break
+        if thread.is_alive():
+            thread.join(remaining)
+
+    _worker_threads = [thread for thread in _worker_threads if thread.is_alive()]
+    _started = False
 
 
 def _encode_jpg(frame_bgr: np.ndarray) -> bytes:
@@ -108,6 +160,8 @@ def _status_dict():
         "flying": st.flying,
         "battery": st.battery,
         "tello_state": st.tello_state,
+        "tello_host": runtime.host,
+        "tello_command_port": runtime.command_port,
         "error": st.last_error,
         "tracking": tracking_active,
         "seg_enabled": tracking_active,
@@ -119,6 +173,14 @@ def _status_dict():
         "last_det_count": _last_det_count,
         "no_det_streak": _no_det_streak,
         "jpeg_quality": JPEG_QUALITY,
+        "worker_threads": _active_worker_count(),
+        "worker_generation": _worker_generation,
+        "command_center": {
+            "edge_compute_location": "command_center_python_service",
+            "drone_compute_location": "flight_runtime_only",
+            "cors_origins": DRONE_CORS_ORIGINS,
+            "radio": radio_manager.status(),
+        },
     }
 
 
@@ -136,6 +198,7 @@ def _status_response(ok: bool, message: str, status_code: int = 200, error=None)
     }
     if error is not None:
         payload["error"] = error
+        payload["error_info"] = describe_error(error)
     socketio.emit("status", status_data)
     return jsonify(payload), status_code
 
@@ -148,6 +211,8 @@ def _save_event_to_laravel(evt: dict):
             "status": "Rescue Needed",
             "conf": evt.get("conf"),
             "message": evt.get("message"),
+            "original_image_path": evt.get("original_image_path"),
+            "annotated_image_path": evt.get("annotated_image_path"),
             "bbox_json": evt.get("bbox"),
             "dbg_json": evt.get("dbg"),
             "event_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(evt.get("ts", time.time()))),
@@ -157,6 +222,39 @@ def _save_event_to_laravel(evt: dict):
         print("Laravel ingest:", r.status_code, r.text)
     except Exception as e:
         print("SAVE_EVENT_TO_LARAVEL_FAILED:", e)
+
+
+def _safe_event_token(value) -> str:
+    token = str(value if value is not None else "unknown").strip()
+    token = token.strip("()")
+    token = token.replace(",", "-")
+    token = "".join(ch if ch.isalnum() or ch in ("-", "_") else "-" for ch in token)
+    token = "-".join(part for part in token.split("-") if part)
+    return token or "unknown"
+
+
+def _attach_event_images(evt: dict, frame_bgr: np.ndarray, info: dict):
+    try:
+        EVENT_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+        ts = evt.get("ts", time.time())
+        stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(ts))
+        tid = _safe_event_token(evt.get("tid"))
+        millis = int((ts - int(ts)) * 1000)
+        stem = f"{stamp}-{millis:03d}-target-{tid}"
+
+        original_name = f"{stem}-original.jpg"
+        annotated_name = f"{stem}-boxed.jpg"
+        original_path = EVENT_IMAGE_DIR / original_name
+        annotated_path = EVENT_IMAGE_DIR / annotated_name
+
+        annotated = overlay_infos(frame_bgr, [info])
+        cv2.imwrite(str(original_path), frame_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 86])
+        cv2.imwrite(str(annotated_path), annotated, [int(cv2.IMWRITE_JPEG_QUALITY), 88])
+
+        evt["original_image_path"] = f"{EVENT_IMAGE_URL_PREFIX}/{original_name}"
+        evt["annotated_image_path"] = f"{EVENT_IMAGE_URL_PREFIX}/{annotated_name}"
+    except Exception as e:
+        print("ATTACH_EVENT_IMAGES_FAILED:", e)
 
 
 def _push_event(evt: dict):
@@ -170,20 +268,27 @@ def _push_event(evt: dict):
 
 
 def _ensure_started() -> bool:
-    global _started
-    if _started:
+    global _started, _worker_generation, _worker_threads
+    if _started and _active_worker_count() > 0:
         return True
 
     if not runtime.start_stream():
         return False
 
     _stop.clear()
-    threading.Thread(target=_capture_loop, daemon=True).start()
-    threading.Thread(target=_inference_loop, daemon=True).start()
-    threading.Thread(target=_display_loop, daemon=True).start()
-    threading.Thread(target=_push_loop, daemon=True).start()
-    threading.Thread(target=_event_loop, daemon=True).start()
-    threading.Thread(target=_event_save_loop, daemon=True).start()
+    _worker_generation += 1
+    generation = _worker_generation
+    _worker_threads = []
+
+    for target in (
+        _capture_loop,
+        _inference_loop,
+        _display_loop,
+        _push_loop,
+        _event_loop,
+        _event_save_loop,
+    ):
+        _start_worker(target, generation)
 
     _started = True
     return True
@@ -193,9 +298,13 @@ def _ensure_connected() -> bool:
     return runtime.connect()
 
 
-def _event_save_loop():
-    while not _stop.is_set():
-        evt = _event_save_queue.get()
+def _event_save_loop(generation: int):
+    while _worker_active(generation):
+        try:
+            evt = _event_save_queue.get(timeout=0.2)
+        except Empty:
+            continue
+
         try:
             _save_event_to_laravel(evt)
         finally:
@@ -226,9 +335,9 @@ def _scale_infos_for_display(infos: list, src_shape, dst_shape) -> list:
     return scaled
 
 
-def _capture_loop():
+def _capture_loop(generation: int):
     global _latest_frame, _latest_err
-    while not _stop.is_set():
+    while _worker_active(generation):
         ok, frame, err = runtime.frame()
         with _frame_lock:
             if ok and frame is not None:
@@ -239,11 +348,11 @@ def _capture_loop():
         time.sleep(0.003)
 
 
-def _inference_loop():
+def _inference_loop(generation: int):
     global _latest_infos, _latest_infos_shape, _last_infer_ts, _last_infer_ms, _last_det_count, _no_det_streak
     proc_interval = 1.0 / max(1e-6, PROC_FPS)
 
-    while not _stop.is_set():
+    while _worker_active(generation):
         now = time.time()
         if (now - _last_infer_ts) < proc_interval:
             time.sleep(0.005)
@@ -267,6 +376,7 @@ def _inference_loop():
                 for it in infos:
                     evt = it.get("event")
                     if isinstance(evt, dict):
+                        _attach_event_images(evt, frame, it)
                         _push_event(evt)
 
                 with _infos_lock:
@@ -288,12 +398,12 @@ def _inference_loop():
         _last_infer_ts = time.time()
 
 
-def _display_loop():
+def _display_loop(generation: int):
     global _last_jpg
 
     interval = 1.0 / max(1e-6, STREAM_FPS)
 
-    while not _stop.is_set():
+    while _worker_active(generation):
         with _frame_lock:
             frame = None if _latest_frame is None else _latest_frame.copy()
             err = _latest_err
@@ -328,9 +438,9 @@ def _display_loop():
         time.sleep(interval)
 
 
-def _push_loop():
+def _push_loop(generation: int):
     interval = 1.0 / max(1e-6, STREAM_FPS)
-    while not _stop.is_set():
+    while _worker_active(generation):
         with _disp_lock:
             jpg = _last_jpg
         if jpg:
@@ -338,9 +448,9 @@ def _push_loop():
         time.sleep(interval)
 
 
-def _event_loop():
+def _event_loop(generation: int):
     last_len = 0
-    while not _stop.is_set():
+    while _worker_active(generation):
         with _events_lock:
             n = len(_events)
             evt = _events[-1] if n > 0 else None
@@ -354,6 +464,42 @@ def _event_loop():
 @app.get("/status")
 def status():
     return jsonify(_status_dict())
+
+
+@app.get("/radio/status")
+def radio_status():
+    return jsonify(radio_manager.status())
+
+
+@app.post("/radio/scan")
+def radio_scan():
+    result = radio_manager.scan()
+    return jsonify(result), 200 if result.get("ok") else 503
+
+
+@app.post("/radio/preflight")
+def radio_preflight():
+    result = radio_manager.preflight()
+    return jsonify(result), 200 if result.get("ok") else 428
+
+
+@app.post("/radio/auto-hop")
+def radio_auto_hop():
+    result = radio_manager.auto_hop()
+    return jsonify(result), 200 if result.get("ok") else 503
+
+
+@app.post("/radio/channel")
+def radio_channel():
+    payload = request.get_json(silent=True) or {}
+    try:
+        channel = int(payload.get("channel"))
+    except (TypeError, ValueError):
+        result = error_payload("INVALID_RADIO_CHANNEL", "Missing or invalid channel.", status=radio_manager.status())
+        return jsonify(result), 422
+
+    result = radio_manager.set_channel(channel)
+    return jsonify(result), 200 if result.get("ok") else 422
 
 
 @app.get("/debug/seg")
@@ -382,18 +528,22 @@ def start_tracking():
         return jsonify({"ok": False, "error": runtime.state.last_error}), 503
     set_pose_enabled(False)
     tracking_active = True
-    return jsonify({"ok": True, "message": "SEG detection started", "pose_enabled": False}), 200
+    return jsonify({"ok": True, "message": "Injured-target detection started", "pose_enabled": False}), 200
 
 
 @app.post("/stop")
 def stop_tracking():
     global tracking_active
     tracking_active = False
-    return jsonify({"ok": True, "message": "Tracking stopped"}), 200
+    return jsonify({"ok": True, "message": "Injured-target detection stopped"}), 200
 
 
 @app.post("/takeoff")
 def takeoff():
+    radio_preflight_result = radio_manager.preflight()
+    if not radio_preflight_result.get("ok"):
+        return jsonify(radio_preflight_result), 428
+
     if not _ensure_connected():
         return _status_response(False, "Unable to connect before takeoff", 503, runtime.state.last_error)
 
@@ -426,8 +576,9 @@ def emergency():
 
 @app.post("/sdk/reset")
 def reset_sdk():
-    global _started
-    _started = False
+    global tracking_active
+    tracking_active = False
+    _stop_workers()
 
     if not runtime.reset_sdk():
         return _status_response(False, "SDK reset failed", 503, runtime.state.last_error)
@@ -528,13 +679,13 @@ def nudge_yaw_right():
 @app.post("/pose/start")
 def start_pose():
     set_pose_enabled(True)
-    return jsonify({"ok": True, "pose_enabled": True, "message": "Pose assist enabled"}), 200
+    return jsonify({"ok": True, "pose_enabled": True, "message": "Posture assist enabled"}), 200
 
 
 @app.post("/pose/stop")
 def stop_pose():
     set_pose_enabled(False)
-    return jsonify({"ok": True, "pose_enabled": False, "message": "Pose assist disabled"}), 200
+    return jsonify({"ok": True, "pose_enabled": False, "message": "Posture assist disabled"}), 200
 
 
 @socketio.on("connect")

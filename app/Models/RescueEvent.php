@@ -12,6 +12,8 @@ class RescueEvent extends Model
         'status',
         'conf',
         'message',
+        'original_image_path',
+        'annotated_image_path',
         'bbox_json',
         'dbg_json',
         'event_time',

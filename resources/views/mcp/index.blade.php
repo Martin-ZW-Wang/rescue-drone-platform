@@ -4,27 +4,26 @@
     <style>
         .mcp-shell {
             display: grid;
-            grid-template-columns: 320px minmax(0, 1fr);
+            grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
             gap: 18px;
-            min-height: calc(100vh - 44px);
+            height: calc(100dvh - 44px);
+            min-height: 620px;
         }
 
         .mcp-sidebar,
         .chat-card {
-            background:
-                radial-gradient(circle at 20% 0%, rgba(59, 130, 246, .14), transparent 34%),
-                rgba(15, 23, 42, .92);
-            border: 1px solid rgba(148, 163, 184, .22);
-            border-radius: 22px;
-            box-shadow: 0 20px 50px rgba(0, 0, 0, .28);
+            min-width: 0;
             overflow: hidden;
+            border: 1px solid rgba(148, 163, 184, .22);
+            border-radius: 18px;
+            background: rgba(15, 23, 42, .92);
         }
 
         .mcp-sidebar {
             align-self: start;
             position: sticky;
             top: 18px;
-            max-height: calc(100vh - 44px);
+            max-height: 100%;
             overflow: auto;
         }
 
@@ -35,32 +34,12 @@
 
         .side-title {
             margin: 0 0 10px;
-            font-size: 14px;
             color: #cbd5e1;
-            letter-spacing: .04em;
-            text-transform: uppercase;
+            font-size: 14px;
+            font-weight: 900;
         }
 
-        .status-grid {
-            display: grid;
-            gap: 10px;
-        }
-
-        .status-pill {
-            display: flex;
-            justify-content: space-between;
-            gap: 12px;
-            padding: 10px 12px;
-            border: 1px solid rgba(148, 163, 184, .2);
-            border-radius: 14px;
-            background: rgba(2, 6, 23, .35);
-            color: #e5e7eb;
-        }
-
-        .status-pill span:first-child {
-            color: #94a3b8;
-        }
-
+        .status-grid,
         .tool-list,
         .event-list {
             display: grid;
@@ -70,42 +49,221 @@
             list-style: none;
         }
 
-        .tool-list li,
-        .event-item {
+        .status-pill,
+        .event-item,
+        .tool-list li {
             border: 1px solid rgba(148, 163, 184, .18);
-            border-radius: 13px;
-            background: rgba(2, 6, 23, .32);
-            padding: 10px 11px;
+            border-radius: 12px;
+            background: rgba(2, 6, 23, .38);
             color: #dbeafe;
-            font-size: 13px;
+            padding: 10px 11px;
             line-height: 1.45;
+            overflow-wrap: anywhere;
         }
 
-        .event-meta {
-            color: #93c5fd;
+        .status-pill {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+        }
+
+        .status-pill span,
+        .event-meta,
+        .event-subtle {
+            color: #94a3b8;
             font-size: 12px;
-            margin-bottom: 4px;
+        }
+
+        .tool-action {
+            display: grid;
+            gap: 4px;
+            width: 100%;
+            border: 0;
+            background: transparent;
+            color: inherit;
+            cursor: pointer;
+            padding: 0;
+            text-align: left;
+        }
+
+        .tool-action strong {
+            color: #dbeafe;
+            font-size: 13px;
+        }
+
+        .tool-action span {
+            color: var(--accent);
+            font-size: 12px;
+        }
+
+        .tool-list li:hover {
+            border-color: var(--accent-border);
+            background: var(--accent-soft);
+        }
+
+        .event-link {
+            display: inline-flex;
+            margin-top: 6px;
+            color: var(--accent);
+            font-size: 12px;
+            font-weight: 800;
+            text-decoration: none;
+        }
+
+        .event-row {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            margin-top: 6px;
+        }
+
+        .event-chip {
+            border: 1px solid rgba(148, 163, 184, .24);
+            border-radius: 999px;
+            color: #cbd5e1;
+            font-size: 12px;
+            padding: 3px 8px;
+        }
+
+        .event-chip.pending { color: #f7ddca; border-color: var(--accent-border); }
+        .event-chip.reviewed { color: #bbf7d0; border-color: rgba(16, 185, 129, .45); }
+        .event-chip.dismissed { color: #cbd5e1; border-color: rgba(148, 163, 184, .45); }
+
+        .event-evidence-row {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        .event-evidence-link {
+            display: grid;
+            gap: 5px;
+            border: 1px solid var(--accent-border);
+            border-radius: 10px;
+            background: rgba(2, 6, 23, .42);
+            color: #f7ddca;
+            font-size: 12px;
+            font-weight: 800;
+            overflow: hidden;
+            padding: 7px;
+            text-decoration: none;
+        }
+
+        .event-evidence-link img {
+            width: 100%;
+            aspect-ratio: 4 / 3;
+            border-radius: 7px;
+            background: #000;
+            object-fit: cover;
+        }
+
+        .chat-evidence-grid {
+            display: grid;
+            gap: 12px;
+            margin-top: 10px;
+        }
+
+        .chat-evidence-card {
+            border: 1px solid var(--accent-border);
+            border-radius: 12px;
+            background: rgba(33, 25, 35, .72);
+            padding: 10px;
+        }
+
+        .mini-action,
+        .chat-btn,
+        .mode-btn,
+        .prompt-chip {
+            border: 1px solid rgba(148, 163, 184, .24);
+            border-radius: 999px;
+            background: rgba(33, 25, 35, .72);
+            color: #e5e7eb;
+            cursor: pointer;
+            font-weight: 800;
+        }
+
+        .mini-action {
+            border: 0;
+            background: transparent;
+            color: var(--accent);
+            font-size: 12px;
+            padding: 0;
+        }
+
+        .chat-btn,
+        .mode-btn {
+            min-height: 38px;
+            padding: 9px 12px;
+        }
+
+        .prompt-chip {
+            min-height: 36px;
+            padding: 8px 11px;
+            font-size: 13px;
+        }
+
+        .mode-btn.active {
+            border-color: var(--accent);
+            background: var(--accent-gradient);
+            color: var(--accent-ink);
         }
 
         .chat-card {
             display: grid;
             grid-template-rows: auto 1fr auto;
-            min-height: calc(100vh - 44px);
+            height: 100%;
         }
 
         .chat-header {
-            padding: 18px 20px;
-            border-bottom: 1px solid rgba(148, 163, 184, .18);
             display: flex;
             justify-content: space-between;
             gap: 14px;
             align-items: center;
+            padding: 18px 20px;
+            border-bottom: 1px solid rgba(148, 163, 184, .18);
         }
 
         .chat-title {
             margin: 0;
             font-size: 24px;
-            letter-spacing: -.02em;
+        }
+
+        .sunny-title {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .sun-icon {
+            position: relative;
+            display: inline-block;
+            width: 28px;
+            height: 28px;
+            flex: 0 0 auto;
+            border-radius: 999px;
+            background: radial-gradient(circle at 36% 34%, #fff7ed 0 18%, var(--accent) 19% 58%, var(--accent-strong) 59% 100%);
+            box-shadow: 0 0 0 4px rgba(252, 200, 155, .14), 0 0 18px rgba(252, 200, 155, .42);
+        }
+
+        .sun-icon::before {
+            content: "";
+            position: absolute;
+            inset: -7px;
+            z-index: -1;
+            border-radius: inherit;
+            background: repeating-conic-gradient(from 0deg, rgba(252, 200, 155, .95) 0 8deg, transparent 8deg 30deg);
+            mask: radial-gradient(circle, transparent 0 56%, #000 57% 66%, transparent 67%);
+        }
+
+        .sun-icon.is-avatar {
+            width: 20px;
+            height: 20px;
+            box-shadow: none;
+        }
+
+        .sun-icon.is-avatar::before {
+            inset: -5px;
         }
 
         .chat-subtitle {
@@ -114,50 +272,18 @@
             font-size: 14px;
         }
 
-        .mode-tabs {
+        .mode-tabs,
+        .prompt-row,
+        .message-actions {
             display: flex;
             gap: 8px;
             flex-wrap: wrap;
-            justify-content: flex-end;
-        }
-
-        .chat-btn,
-        .mode-btn,
-        .prompt-chip {
-            border: 1px solid rgba(148, 163, 184, .24);
-            border-radius: 999px;
-            color: #e5e7eb;
-            background: rgba(15, 23, 42, .72);
-            cursor: pointer;
-            font-weight: 700;
-            transition: transform .15s ease, border-color .15s ease, background .15s ease;
-        }
-
-        .chat-btn:hover,
-        .mode-btn:hover,
-        .prompt-chip:hover {
-            transform: translateY(-1px);
-            border-color: rgba(96, 165, 250, .75);
-        }
-
-        .chat-btn {
-            padding: 9px 12px;
-        }
-
-        .mode-btn {
-            padding: 9px 12px;
-        }
-
-        .mode-btn.active {
-            background: linear-gradient(135deg, #2563eb, #06b6d4);
-            border-color: rgba(191, 219, 254, .8);
-            color: #fff;
         }
 
         .chat-messages {
+            min-height: 0;
             overflow: auto;
             padding: 22px;
-            scroll-behavior: smooth;
             background:
                 linear-gradient(rgba(15, 23, 42, .35) 1px, transparent 1px),
                 linear-gradient(90deg, rgba(15, 23, 42, .35) 1px, transparent 1px);
@@ -168,9 +294,8 @@
             display: grid;
             grid-template-columns: 38px minmax(0, 1fr);
             gap: 12px;
-            max-width: 900px;
+            width: min(840px, 100%);
             margin: 0 0 18px;
-            animation: chat-pop .18s ease-out;
         }
 
         .message.user {
@@ -179,74 +304,56 @@
         }
 
         .avatar {
-            width: 38px;
-            height: 38px;
-            border-radius: 13px;
             display: grid;
             place-items: center;
-            font-weight: 900;
-            color: #fff;
-            background: linear-gradient(135deg, #334155, #0f172a);
+            width: 38px;
+            height: 38px;
             border: 1px solid rgba(148, 163, 184, .28);
+            border-radius: 12px;
+            background: linear-gradient(135deg, #4a3946, #17131a);
+            color: #fff;
+            font-weight: 900;
         }
 
         .message.user .avatar {
             grid-column: 2;
-            background: linear-gradient(135deg, #2563eb, #06b6d4);
+            background: var(--accent-gradient);
+            color: var(--accent-ink);
+        }
+
+        .avatar.sunny-avatar {
+            overflow: visible;
+            background: rgba(252, 200, 155, .12);
+            border-color: var(--accent-border);
         }
 
         .bubble {
+            min-width: 0;
             border: 1px solid rgba(148, 163, 184, .18);
-            background: rgba(2, 6, 23, .58);
-            border-radius: 18px;
-            padding: 14px 16px;
-            line-height: 1.75;
+            border-radius: 16px;
+            background: rgba(18, 14, 20, .68);
             color: #e5e7eb;
+            line-height: 1.75;
+            padding: 14px 16px;
             overflow-wrap: anywhere;
         }
 
         .message.user .bubble {
             grid-column: 1;
             grid-row: 1;
-            background: linear-gradient(135deg, rgba(37, 99, 235, .82), rgba(14, 165, 233, .72));
-            color: #fff;
+            background: linear-gradient(135deg, rgba(252, 200, 155, .92), rgba(242, 164, 110, .78));
+            color: var(--accent-ink);
         }
 
-        .bubble p {
-            margin: 0 0 10px;
-        }
-
-        .bubble p:last-child {
-            margin-bottom: 0;
-        }
-
-        .bubble ul,
-        .bubble ol {
-            margin: 8px 0 8px 22px;
-            padding: 0;
-        }
-
+        .bubble p { margin: 0 0 10px; }
+        .bubble p:last-child { margin-bottom: 0; }
+        .bubble ul, .bubble ol { margin: 8px 0 8px 22px; padding: 0; }
         .bubble code {
-            background: rgba(15, 23, 42, .82);
             border: 1px solid rgba(148, 163, 184, .18);
             border-radius: 7px;
+            background: rgba(15, 23, 42, .82);
+            color: #f7ddca;
             padding: 2px 5px;
-            color: #bfdbfe;
-        }
-
-        .bubble pre {
-            margin: 10px 0;
-            padding: 12px;
-            border-radius: 14px;
-            background: #020617;
-            border: 1px solid rgba(148, 163, 184, .18);
-            overflow: auto;
-        }
-
-        .message-actions {
-            display: flex;
-            gap: 8px;
-            margin-top: 8px;
         }
 
         .source-grid {
@@ -256,20 +363,16 @@
         }
 
         .source-card {
-            border: 1px solid rgba(96, 165, 250, .28);
-            border-radius: 14px;
-            background: rgba(15, 23, 42, .7);
+            border: 1px solid var(--accent-border);
+            border-radius: 12px;
+            background: rgba(33, 25, 35, .72);
             padding: 11px 12px;
         }
 
         .source-card a {
-            color: #bfdbfe;
-            text-decoration: none;
+            color: var(--accent);
             font-weight: 800;
-        }
-
-        .source-card a:hover {
-            text-decoration: underline;
+            text-decoration: none;
         }
 
         .source-snippet {
@@ -279,32 +382,13 @@
             margin-top: 5px;
         }
 
-        .mini-action {
-            border: 0;
-            background: transparent;
-            color: #93c5fd;
-            cursor: pointer;
-            font-size: 12px;
-            padding: 0;
-        }
-
         .composer {
             border-top: 1px solid rgba(148, 163, 184, .18);
-            padding: 14px 18px 18px;
             background: rgba(2, 6, 23, .38);
+            padding: 14px 18px 18px;
         }
 
-        .prompt-row {
-            display: flex;
-            gap: 8px;
-            flex-wrap: wrap;
-            margin-bottom: 12px;
-        }
-
-        .prompt-chip {
-            padding: 8px 11px;
-            font-size: 13px;
-        }
+        .prompt-row { margin-bottom: 12px; }
 
         .composer-box {
             display: grid;
@@ -312,8 +396,8 @@
             gap: 10px;
             align-items: end;
             border: 1px solid rgba(148, 163, 184, .26);
-            border-radius: 20px;
-            background: rgba(2, 6, 23, .82);
+            border-radius: 18px;
+            background: rgba(11, 7, 10, .86);
             padding: 10px;
         }
 
@@ -321,12 +405,11 @@
             width: 100%;
             min-height: 56px;
             max-height: 190px;
-            resize: none;
             border: 0;
             outline: 0;
+            resize: none;
             background: transparent;
             color: #fff;
-            font: inherit;
             line-height: 1.55;
             padding: 6px 8px;
         }
@@ -334,12 +417,12 @@
         .send-btn {
             width: 46px;
             height: 46px;
-            border-radius: 16px;
             border: 0;
+            border-radius: 14px;
+            background: var(--accent-gradient);
+            color: var(--accent-ink);
             cursor: pointer;
-            color: #fff;
-            background: linear-gradient(135deg, #2563eb, #06b6d4);
-            font-size: 19px;
+            font-size: 18px;
             font-weight: 900;
         }
 
@@ -349,7 +432,7 @@
         }
 
         .composer-help {
-            color: #64748b;
+            color: #94a3b8;
             font-size: 12px;
             margin-top: 8px;
         }
@@ -364,7 +447,7 @@
             width: 7px;
             height: 7px;
             border-radius: 999px;
-            background: #93c5fd;
+            background: var(--accent);
             animation: typing 1s infinite ease-in-out;
         }
 
@@ -376,19 +459,15 @@
             40% { transform: translateY(-5px); opacity: 1; }
         }
 
-        @keyframes chat-pop {
-            from { opacity: 0; transform: translateY(8px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
         @media (max-width: 1120px) {
             .mcp-shell {
                 grid-template-columns: 1fr;
+                height: auto;
             }
-
-            .mcp-sidebar {
-                position: static;
-                max-height: none;
+            .mcp-sidebar { position: static; }
+            .chat-card {
+                min-height: 620px;
+                height: calc(100dvh - 32px);
             }
         }
 
@@ -397,20 +476,9 @@
                 align-items: flex-start;
                 flex-direction: column;
             }
-
-            .mode-tabs {
-                justify-content: flex-start;
-            }
-
             .message,
-            .message.user {
-                grid-template-columns: 1fr;
-            }
-
-            .avatar {
-                display: none;
-            }
-
+            .message.user { grid-template-columns: 1fr; }
+            .avatar { display: none; }
             .message.user .bubble {
                 grid-column: auto;
                 grid-row: auto;
@@ -419,60 +487,67 @@
     </style>
 
     <div class="mcp-shell">
-        <aside class="mcp-sidebar" aria-label="MCP AI 狀態">
+        <aside class="mcp-sidebar" aria-label="Sunny assistant status">
             <div class="side-section">
-                <h2 class="side-title">系統狀態</h2>
+                <h2 class="side-title">System Status</h2>
                 <div class="status-grid">
                     <div class="status-pill">
-                        <span>本地模型</span>
+                        <span>Local Model</span>
                         <strong id="mcpModel">--</strong>
                     </div>
                     <div class="status-pill">
-                        <span>無人機</span>
+                        <span>Drone</span>
                         <strong id="mcpDroneState">--</strong>
                     </div>
                     <div class="status-pill">
-                        <span>MCP 工具</span>
+                        <span>MCP Tools</span>
                         <strong id="mcpToolCount">--</strong>
+                    </div>
+                    <div class="status-pill">
+                        <span>Stored Incidents</span>
+                        <strong id="mcpDbEvents">--</strong>
                     </div>
                 </div>
             </div>
 
             <div class="side-section">
-                <h2 class="side-title">可用工具</h2>
+                <h2 class="side-title">Available Tools</h2>
                 <ul id="mcpTools" class="tool-list">
-                    <li>載入中...</li>
+                    <li>Loading...</li>
                 </ul>
             </div>
 
             <div class="side-section">
                 <div style="display:flex; justify-content:space-between; gap:10px; align-items:center;">
-                    <h2 class="side-title" style="margin:0;">近期救援事件</h2>
-                    <button id="mcpReloadEventsBtn" class="mini-action" type="button">重新整理</button>
-                    <button id="mcpClearEventsBtn" class="mini-action" type="button" style="color:#fca5a5; margin-left:10px;">清除測試事件</button>
+                    <h2 class="side-title" style="margin:0;">Recent Rescue Incidents</h2>
+                    <div style="display:flex; gap:10px;">
+                        <button id="mcpReloadEventsBtn" class="mini-action" type="button">Refresh</button>
+                        <button id="mcpClearEventsBtn" class="mini-action" type="button" style="color:#fca5a5;">Clear Test Incidents</button>
+                    </div>
                 </div>
-                <div style="color:#94a3b8; font-size:12px; margin-top:8px;">本區只顯示本次啟動後的新事件；歷史事件已隱藏。</div>
-                <div id="mcpDetectionNotice" class="event-item" style="display:none; margin-top:10px; border-color:rgba(245,158,11,.45); color:#fde68a;"></div>
+                <div style="color:#94a3b8; font-size:12px; margin-top:8px;">This panel shows new incidents generated during the current session. Open details to inspect original and AI-annotated evidence.</div>
+                <div id="mcpDetectionNotice" class="event-item" style="display:none; margin-top:10px; border-color:var(--accent-border); color:#f7ddca;"></div>
                 <ul id="mcpEventsBody" class="event-list" style="margin-top:10px;">
-                    <li class="event-item">載入中...</li>
+                    <li class="event-item">Loading...</li>
                 </ul>
             </div>
 
             <div class="side-section">
-                <button id="mcpRefreshBtn" class="chat-btn" type="button">更新 MCP 狀態</button>
+                <button id="mcpRefreshBtn" class="chat-btn" type="button">Refresh MCP Status</button>
             </div>
         </aside>
 
-        <section class="chat-card" aria-label="本地 AI 對話">
+        <section class="chat-card" aria-label="Sunny AI assistant">
             <header class="chat-header">
                 <div>
-                    <h1 class="chat-title">本地 AI 助手</h1>
+                    <h1 class="chat-title sunny-title"><span class="sun-icon" aria-hidden="true"></span><span>Sunny</span></h1>
+                    <p class="chat-subtitle">Local AI assistant for rescue incidents, system state, and cited external sources.</p>
                 </div>
-                <div class="mode-tabs" role="tablist" aria-label="對話模式">
-                    <button id="mcpRescueModeBtn" class="mode-btn active" type="button">救援事件分析</button>
-                    <button id="mcpGeneralModeBtn" class="mode-btn" type="button">本地模型問答</button>
-                    <button id="mcpWebModeBtn" class="mode-btn" type="button">網路查詢</button>
-                    <button id="mcpClearBtn" class="chat-btn" type="button">清除對話</button>
+                <div class="mode-tabs" role="tablist" aria-label="Chat mode">
+                    <button id="mcpRescueModeBtn" class="mode-btn active" type="button">Incident Analysis</button>
+                    <button id="mcpGeneralModeBtn" class="mode-btn" type="button">System Context</button>
+                    <button id="mcpWebModeBtn" class="mode-btn" type="button">Web Research</button>
+                    <button id="mcpClearBtn" class="chat-btn" type="button">Clear Chat</button>
                 </div>
             </header>
 
@@ -480,16 +555,16 @@
 
             <footer class="composer">
                 <div class="prompt-row">
-                    <button class="prompt-chip" type="button" data-prompt="請分析最近 10 筆救援事件，列出高風險事件與建議處理順序。">分析救援風險</button>
-                    <button class="prompt-chip" type="button" data-prompt="請說明目前 SEG 偵測與 Pose 輔助的差異，並建議適合的使用情境。">說明 SEG / Pose</button>
-                    <button class="prompt-chip" type="button" data-prompt="請幫我整理目前系統狀態，包含無人機、事件資料與本地 AI 工具。">整理系統狀態</button>
-                    <button class="prompt-chip" type="button" data-prompt="請上網查詢今天台灣無人機救援或災害應變相關資訊，整理重點並附來源。">網路查詢範例</button>
+                    <button class="prompt-chip" type="button" data-prompt="Analyze the latest 10 rescue incidents. Identify high-risk incidents, target IDs, confidence values, operator disposition, and recommended response order.">Analyze Incident Risk</button>
+                    <button class="prompt-chip" type="button" data-prompt="Explain the difference between casualty detection and posture-assisted assessment, and recommend appropriate operating scenarios.">Explain Detection/Posture</button>
+                    <button class="prompt-chip" type="button" data-prompt="Summarize the current system state, including drone link, incident database, local AI model, and MCP tools.">Summarize System State</button>
+                    <button class="prompt-chip" type="button" data-prompt="Search current public information related to drone-assisted rescue or disaster response, summarize the key points, and cite sources.">Web Research Example</button>
                 </div>
                 <div class="composer-box">
-                    <textarea id="mcpQuestion" placeholder="輸入訊息，Enter 送出，Shift + Enter 換行"></textarea>
-                    <button id="mcpSummarizeBtn" class="send-btn" type="button" aria-label="送出">↑</button>
+                    <textarea id="mcpQuestion" placeholder="Enter a question. Press Enter to send, Shift + Enter for a new line."></textarea>
+                    <button id="mcpSummarizeBtn" class="send-btn" type="button" aria-label="Send">Send</button>
                 </div>
-                <div id="mcpModeHint" class="composer-help">目前模式：救援事件分析，會把近期救援事件一併提供給本地模型。</div>
+                <div id="mcpModeHint" class="composer-help">Current mode: Incident Analysis. Recent rescue incidents will be provided to the local model.</div>
             </footer>
         </section>
     </div>
@@ -507,6 +582,7 @@
             model: document.getElementById('mcpModel'),
             droneState: document.getElementById('mcpDroneState'),
             toolCount: document.getElementById('mcpToolCount'),
+            dbEvents: document.getElementById('mcpDbEvents'),
             tools: document.getElementById('mcpTools'),
             question: document.getElementById('mcpQuestion'),
             modeHint: document.getElementById('mcpModeHint'),
@@ -520,6 +596,49 @@
         let mcpSessionStartedAt = new Date().toISOString();
         let mcpLastDroneStatus = null;
 
+        const mcpToolPrompts = {
+            get_drone_status: {
+                mode: 'rescue',
+                label: 'Read drone state',
+                prompt: 'Summarize the current drone state, including link, stream, flight state, battery, error message, casualty detection, and posture assessment.',
+            },
+            get_recent_events: {
+                mode: 'rescue',
+                label: 'List recent incidents',
+                prompt: 'List the latest 10 rescue incidents. Include incident ID, target ID, detection status, confidence, operator disposition, and operational risk.',
+            },
+            get_event_detail: {
+                mode: 'rescue',
+                label: 'Inspect incident detail',
+                prompt: 'Select the most operationally significant recent incident and summarize its detail, risk, and next response step.',
+            },
+            summarize_recent_events: {
+                mode: 'rescue',
+                label: 'Summarize incidents',
+                prompt: 'Summarize recent rescue incidents by risk level and provide a recommended response priority.',
+            },
+            local_model_chat: {
+                mode: 'general',
+                label: 'Local model Q&A',
+                prompt: 'Explain how this system architecture operates, including Laravel, the Python drone server, MCP AI, the database, and drone-control workflow.',
+            },
+            local_web_search: {
+                mode: 'web',
+                label: 'Web research',
+                prompt: 'Search for current information about drone-assisted rescue or disaster response and summarize key points with sources.',
+            },
+            fetch_web_page: {
+                mode: 'web',
+                label: 'Fetch web evidence',
+                prompt: 'Find and summarize credible public sources related to UAV rescue, emergency response, or disaster management.',
+            },
+            answer_with_sources: {
+                mode: 'web',
+                label: 'Cited answer',
+                prompt: 'Answer with traceable sources: what are common applications, limitations, and operational considerations for drones in rescue or disaster response?',
+            },
+        };
+
         function escapeHtml(value) {
             return String(value ?? '')
                 .replaceAll('&', '&amp;')
@@ -531,39 +650,17 @@
 
         function renderMarkdown(text) {
             const escaped = escapeHtml(text || '');
-            const parts = escaped.split(/```/);
-
-            return parts.map((part, index) => {
-                if (index % 2 === 1) {
-                    const code = part.replace(/^\w+\n/, '');
-                    return `<pre><code>${code}</code></pre>`;
+            const blocks = escaped.split(/\n{2,}/);
+            return blocks.map((block) => {
+                const trimmed = block.trim();
+                if (!trimmed) return '';
+                const lines = trimmed.split('\n');
+                if (lines.every((line) => /^(\*|-|\d+\.)\s+/.test(line.trim()))) {
+                    const items = lines.map((line) => line.trim().replace(/^(\*|-|\d+\.)\s+/, ''));
+                    const tag = /^\d+\./.test(lines[0].trim()) ? 'ol' : 'ul';
+                    return `<${tag}>${items.map((item) => `<li>${item}</li>`).join('')}</${tag}>`;
                 }
-
-                return part
-                    .split(/\n{2,}/)
-                    .map((block) => {
-                        const trimmed = block.trim();
-                        if (!trimmed) return '';
-
-                        if (/^(\*|-)\s+/m.test(trimmed)) {
-                            const items = trimmed.split('\n')
-                                .filter(Boolean)
-                                .map((line) => `<li>${line.replace(/^(\*|-)\s+/, '')}</li>`)
-                                .join('');
-                            return `<ul>${items}</ul>`;
-                        }
-
-                        if (/^\d+\.\s+/m.test(trimmed)) {
-                            const items = trimmed.split('\n')
-                                .filter(Boolean)
-                                .map((line) => `<li>${line.replace(/^\d+\.\s+/, '')}</li>`)
-                                .join('');
-                            return `<ol>${items}</ol>`;
-                        }
-
-                        return `<p>${trimmed.replace(/\n/g, '<br>')}</p>`;
-                    })
-                    .join('');
+                return `<p>${lines.join('<br>')}</p>`;
             }).join('');
         }
 
@@ -571,18 +668,16 @@
             const response = await fetch(url, {
                 ...options,
                 headers: {
-                    'Accept': 'application/json',
+                    Accept: 'application/json',
                     'Content-Type': 'application/json',
                     ...(options.headers || {}),
                 },
             });
 
             const data = await response.json().catch(() => ({}));
-
             if (!response.ok || data.ok === false) {
                 throw new Error(data.message || data.error || `HTTP ${response.status}`);
             }
-
             return data;
         }
 
@@ -590,35 +685,47 @@
             mcpEls.messages.scrollTop = mcpEls.messages.scrollHeight;
         }
 
+        function toolConfig(tool) {
+            return mcpToolPrompts[tool] || {
+                mode: 'rescue',
+                label: tool,
+                prompt: `Use the ${tool} capability and summarize the available information in professional English.`,
+            };
+        }
+
+        function toolButtonHtml(tool) {
+            const config = toolConfig(tool);
+            return `
+                <li>
+                    <button class="tool-action" type="button" data-tool="${escapeHtml(tool)}">
+                        <strong>${escapeHtml(tool)}</strong>
+                        <span>${escapeHtml(config.label)}</span>
+                    </button>
+                </li>
+            `;
+        }
+
         function addMessage(role, text, options = {}) {
             const message = document.createElement('article');
             message.className = `message ${role}`;
-            const avatarText = role === 'user' ? '你' : 'AI';
+            const avatarHtml = role === 'user'
+                ? '<div class="avatar">You</div>'
+                : '<div class="avatar sunny-avatar" aria-label="Sunny"><span class="sun-icon is-avatar" aria-hidden="true"></span></div>';
             const bubbleHtml = options.typing
                 ? '<div class="typing"><span></span><span></span><span></span></div>'
                 : renderMarkdown(text);
 
             message.innerHTML = role === 'user'
-                ? `
-                    <div class="bubble">${bubbleHtml}</div>
-                    <div class="avatar">${avatarText}</div>
-                `
-                : `
-                    <div class="avatar">${avatarText}</div>
-                    <div>
-                        <div class="bubble">${bubbleHtml}</div>
-                        ${options.copyable ? '<div class="message-actions"><button class="mini-action" type="button">複製回覆</button></div>' : ''}
-                    </div>
-                `;
+                ? `<div class="bubble">${bubbleHtml}</div>${avatarHtml}`
+                : `${avatarHtml}<div><div class="bubble">${bubbleHtml}</div>${options.copyable ? '<div class="message-actions"><button class="mini-action" type="button">Copy Response</button></div>' : ''}</div>`;
 
             if (options.copyable) {
                 message.querySelector('.mini-action')?.addEventListener('click', async () => {
                     await navigator.clipboard.writeText(text || '');
-                    message.querySelector('.mini-action').textContent = '已複製';
-                    setTimeout(() => {
-                        const btn = message.querySelector('.mini-action');
-                        if (btn) btn.textContent = '複製回覆';
-                    }, 1400);
+                    const btn = message.querySelector('.mini-action');
+                    if (!btn) return;
+                    btn.textContent = 'Copied';
+                    setTimeout(() => { btn.textContent = 'Copy Response'; }, 1400);
                 });
             }
 
@@ -640,76 +747,161 @@
                     <a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer">
                         [${escapeHtml(source.id)}] ${escapeHtml(source.title || source.url)}
                     </a>
-                    <div class="source-snippet">${escapeHtml(source.snippet || source.content || '無摘要')}</div>
+                    <div class="source-snippet">${escapeHtml(source.snippet || source.content || 'No excerpt available.')}</div>
+                </div>
+            `).join('');
+
+            addMessage('assistant', `Reference sources:\n\n${sourceHtml}`, { copyable: false });
+            const lastBubble = mcpEls.messages.lastElementChild?.querySelector('.bubble');
+            if (lastBubble) lastBubble.innerHTML = `<strong>Reference Sources</strong><div class="source-grid">${sourceHtml}</div>`;
+        }
+
+        function evidencePath(path) {
+            const value = String(path || '').trim();
+            if (!value) return '';
+            if (/^https?:\/\//i.test(value)) return value;
+            return value.startsWith('/') ? value : `/${value}`;
+        }
+
+        function evidenceLinksHtml(event) {
+            const original = evidencePath(event.original_image_path);
+            const annotated = evidencePath(event.annotated_image_path);
+            const items = [];
+
+            if (original) {
+                items.push(`
+                    <a class="event-evidence-link" href="${escapeHtml(original)}" target="_blank" rel="noopener noreferrer">
+                        <img src="${escapeHtml(original)}" alt="Original frame for incident ${escapeHtml(event.display_number || event.id)}">
+                        <span>Original Frame</span>
+                    </a>
+                `);
+            }
+
+            if (annotated) {
+                items.push(`
+                    <a class="event-evidence-link" href="${escapeHtml(annotated)}" target="_blank" rel="noopener noreferrer">
+                        <img src="${escapeHtml(annotated)}" alt="AI-annotated frame for incident ${escapeHtml(event.display_number || event.id)}">
+                        <span>AI-Annotated Frame</span>
+                    </a>
+                `);
+            }
+
+            return items.length ? `<div class="event-evidence-row">${items.join('')}</div>` : '';
+        }
+
+        function addEvidenceMessage(events) {
+            const withEvidence = (events || []).filter((event) => event.original_image_path || event.annotated_image_path).slice(0, 4);
+            if (withEvidence.length === 0) return;
+
+            const html = withEvidence.map((event) => `
+                <div class="chat-evidence-card">
+                    <strong>Incident #${escapeHtml(event.display_number || event.id)}</strong>
+                    <div class="event-subtle">${escapeHtml(statusLabel(event.status))} / ${escapeHtml(trackLabel(event))}</div>
+                    ${evidenceLinksHtml(event)}
+                    <a class="event-link" href="/events/${encodeURIComponent(event.id)}">Open full incident detail</a>
                 </div>
             `).join('');
 
             const message = document.createElement('article');
             message.className = 'message';
             message.innerHTML = `
-                <div class="avatar">Ref</div>
+                <div class="avatar sunny-avatar" aria-label="Sunny"><span class="sun-icon is-avatar" aria-hidden="true"></span></div>
                 <div>
                     <div class="bubble">
-                        <strong>來源整理</strong>
-                        <div class="source-grid">${sourceHtml}</div>
+                        <strong>Visual Evidence</strong>
+                        <div class="chat-evidence-grid">${html}</div>
                     </div>
                 </div>
             `;
-
             mcpEls.messages.appendChild(message);
             scrollChatToBottom();
         }
 
+        function formatPercent(value) {
+            if (value === null || value === undefined || value === '') return '--';
+            const number = Number(value);
+            if (!Number.isFinite(number)) return String(value);
+            return `${Math.round(number <= 1 ? number * 100 : number)}%`;
+        }
+
+        function statusLabel(status) {
+            return ({
+                'Rescue Needed': 'Rescue Required',
+                'Suspected Injury': 'Suspected Casualty',
+                'Detected Injury': 'Casualty Detected',
+                'Posture Unclear': 'Posture Unclear',
+                'Pose Unclear': 'Posture Unclear',
+                OK: 'No Abnormality Detected',
+            })[status] || status || '--';
+        }
+
+        function reviewLabel(review) {
+            return ({
+                pending: 'Pending Review',
+                reviewed: 'Confirmed',
+                dismissed: 'Dismissed',
+            })[review || 'pending'] || review || 'Pending Review';
+        }
+
+        function trackLabel(event) {
+            const raw = String(event.tid ?? '').trim();
+            if (!raw) return 'Unassigned';
+            const cleaned = raw.replace(/[()]/g, '').replace(/\s*,\s*/g, '-').replace(/\s+/g, '-');
+            return `Target #${cleaned}`;
+        }
+
         function updateDetectionNotice() {
             if (!mcpEls.detectionNotice) return;
-
             const segEnabled = mcpLastDroneStatus?.seg_enabled === true || mcpLastDroneStatus?.tracking === true;
-
             if (segEnabled) {
                 mcpEls.detectionNotice.style.display = 'none';
                 mcpEls.detectionNotice.textContent = '';
                 return;
             }
-
             mcpEls.detectionNotice.style.display = 'block';
-            mcpEls.detectionNotice.textContent = '目前未開啟即時偵測，事件列表只會顯示本次啟動後已產生的新事件。';
+            mcpEls.detectionNotice.textContent = 'Real-time detection is not currently active. The incident list only shows incidents that have already been generated.';
         }
 
         function renderEvents(events) {
             updateDetectionNotice();
             if (!events || events.length === 0) {
-                mcpEls.eventsBody.innerHTML = '<li class="event-item">本次啟動後尚未收到新救援事件。</li>';
+                mcpEls.eventsBody.innerHTML = '<li class="event-item">No new rescue incidents have been received during this session.</li>';
                 return;
             }
 
             mcpEls.eventsBody.innerHTML = events.map((event) => `
                 <li class="event-item">
-                    <div class="event-meta">#${escapeHtml(event.id)} · ${escapeHtml(event.event_time || '--')}</div>
-                    <strong>${escapeHtml(event.status || '--')}</strong>
-                    <div>信心度：${escapeHtml(event.conf ?? '--')}</div>
-                    <div>${escapeHtml(event.message || '')}</div>
+                    <div class="event-meta">#${escapeHtml(event.display_number || event.id)} / ${escapeHtml(event.event_time || '--')}</div>
+                    <strong>${escapeHtml(statusLabel(event.status))}</strong>
+                    <div class="event-row">
+                        <span class="event-chip">${escapeHtml(trackLabel(event))}</span>
+                        <span class="event-chip">Confidence ${escapeHtml(formatPercent(event.conf))}</span>
+                        <span class="event-chip ${escapeHtml(event.review_status || 'pending')}">${escapeHtml(reviewLabel(event.review_status))}</span>
+                    </div>
+                    <div class="event-subtle" style="margin-top:6px;">${escapeHtml(event.message || 'No incident description is available.')}</div>
+                    ${evidenceLinksHtml(event)}
+                    <a class="event-link" href="/events/${encodeURIComponent(event.id)}">Open incident detail</a>
                 </li>
             `).join('');
         }
 
         async function loadMcpStatus() {
-            mcpEls.tools.innerHTML = '<li>載入中...</li>';
-
+            mcpEls.tools.innerHTML = '<li>Loading...</li>';
             try {
                 const data = await mcpFetchJson('/api/mcp/status');
                 const drone = data.drone || {};
                 mcpLastDroneStatus = drone;
                 updateDetectionNotice();
+
                 const connected = drone.connected === true;
                 const streaming = drone.streaming === true;
-
                 mcpEls.model.textContent = data.model || '--';
-                mcpEls.droneState.textContent = connected ? (streaming ? '串流中' : '已連線') : '未連線';
-                mcpEls.droneState.style.color = connected ? '#10b981' : '#f59e0b';
+                mcpEls.droneState.textContent = connected ? (streaming ? 'Connected / Streaming' : 'Connected') : 'Disconnected';
+                mcpEls.droneState.style.color = connected ? '#10b981' : '#8f4b57';
                 mcpEls.toolCount.textContent = Array.isArray(data.tools) ? data.tools.length : 0;
-                mcpEls.tools.innerHTML = (data.tools || [])
-                    .map((tool) => `<li>${escapeHtml(tool)}</li>`)
-                    .join('') || '<li>尚無工具</li>';
+                mcpEls.dbEvents.textContent = data.db?.event_count ?? '--';
+                mcpEls.dbEvents.title = data.db?.database || '';
+                mcpEls.tools.innerHTML = (data.tools || []).map((tool) => toolButtonHtml(tool)).join('') || '<li>No tools available</li>';
 
                 if (data.drone_error) {
                     mcpEls.tools.innerHTML += `<li>Drone API warning: ${escapeHtml(data.drone_error)}</li>`;
@@ -717,51 +909,37 @@
             } catch (error) {
                 mcpLastDroneStatus = null;
                 updateDetectionNotice();
-                mcpEls.tools.innerHTML = `<li>MCP 狀態讀取失敗：${escapeHtml(error.message)}</li>`;
-                mcpEls.droneState.textContent = '讀取失敗';
+                mcpEls.tools.innerHTML = `<li>MCP status retrieval failed: ${escapeHtml(error.message)}</li>`;
+                mcpEls.droneState.textContent = 'Read failed';
                 mcpEls.droneState.style.color = '#ef4444';
             }
         }
 
         async function loadMcpEvents() {
-            mcpEls.eventsBody.innerHTML = '<li class="event-item">載入中...</li>';
-
+            mcpEls.eventsBody.innerHTML = '<li class="event-item">Loading...</li>';
             try {
-                const params = new URLSearchParams({
-                    limit: '10',
-                    since: mcpSessionStartedAt,
-                });
+                const params = new URLSearchParams({ limit: '10', since: mcpSessionStartedAt });
                 const data = await mcpFetchJson(`/api/mcp/events/recent?${params.toString()}`);
                 renderEvents(data.events);
             } catch (error) {
-                mcpEls.eventsBody.innerHTML = `<li class="event-item">事件讀取失敗：${escapeHtml(error.message)}</li>`;
+                mcpEls.eventsBody.innerHTML = `<li class="event-item">Incident retrieval failed: ${escapeHtml(error.message)}</li>`;
             }
         }
 
         async function clearMcpEvents() {
-            if (!window.confirm('確定要清除目前資料庫中的測試救援事件嗎？此動作無法復原。')) {
-                return;
-            }
-
-            if (mcpEls.clearEventsBtn) {
-                mcpEls.clearEventsBtn.disabled = true;
-            }
-
+            if (!window.confirm('Clear all test rescue incidents from the current database? This action cannot be undone.')) return;
+            mcpEls.clearEventsBtn.disabled = true;
             try {
-                const data = await mcpFetchJson('/api/mcp/events/clear', {
-                    method: 'DELETE',
-                });
-
+                const data = await mcpFetchJson('/api/mcp/events/clear', { method: 'DELETE' });
                 mcpSessionStartedAt = new Date().toISOString();
                 renderEvents([]);
-                addMessage('assistant', `已清除 ${data.deleted ?? 0} 筆測試事件。之後只會顯示本次啟動後的新事件。`, { copyable: false });
+                addMessage('assistant', `Cleared ${data.deleted ?? 0} test incidents. Only new incidents from this session will be displayed.`);
             } catch (error) {
-                addMessage('assistant', `清除測試事件失敗：${error.message}`, { copyable: true });
+                addMessage('assistant', `Failed to clear test incidents: ${error.message}`, { copyable: true });
             } finally {
-                if (mcpEls.clearEventsBtn) {
-                    mcpEls.clearEventsBtn.disabled = false;
-                }
+                mcpEls.clearEventsBtn.disabled = false;
                 loadMcpEvents();
+                loadMcpStatus();
             }
         }
 
@@ -774,7 +952,6 @@
             addMessage('user', question);
             mcpEls.question.value = '';
             autoResizeQuestion();
-
             const pending = addMessage('assistant', '', { typing: true });
 
             try {
@@ -788,11 +965,12 @@
                     }),
                 });
 
-                replaceMessage(pending, 'assistant', data.summary || '模型沒有回傳內容。', { copyable: true });
+                replaceMessage(pending, 'assistant', data.summary || 'The model returned no content.', { copyable: true });
                 addSourcesMessage(data.sources);
                 renderEvents(data.events);
+                addEvidenceMessage(data.events);
             } catch (error) {
-                replaceMessage(pending, 'assistant', `發生錯誤：${error.message}\n\n請確認 Ollama、本地模型與 MCP API 都已啟動。`, { copyable: true });
+                replaceMessage(pending, 'assistant', `Query failed: ${error.message}\n\nConfirm that Ollama, the local model, and the MCP API are running.`, { copyable: true });
             } finally {
                 isSending = false;
                 mcpEls.summarizeBtn.disabled = false;
@@ -805,18 +983,14 @@
             const rescue = nextMode === 'rescue';
             const general = nextMode === 'general';
             const web = nextMode === 'web';
-
             mcpEls.rescueModeBtn.classList.toggle('active', rescue);
             mcpEls.generalModeBtn.classList.toggle('active', general);
             mcpEls.webModeBtn.classList.toggle('active', web);
-
-            if (rescue) {
-                mcpEls.modeHint.textContent = '目前模式：救援事件分析，會把近期救援事件一併提供給本地模型。';
-            } else if (web) {
-                mcpEls.modeHint.textContent = '目前模式：網路查詢，後端會先搜尋網頁、整理來源，再交給本地模型回答。';
-            } else {
-                mcpEls.modeHint.textContent = '目前模式：一般本地模型問答，不會主動查詢外部即時資料。';
-            }
+            mcpEls.modeHint.textContent = rescue
+                ? 'Current mode: Incident Analysis. Recent rescue incidents will be provided to the local model.'
+                : web
+                    ? 'Current mode: Web Research. Public sources will be searched and cited when available.'
+                    : 'Current mode: System Context. Use this for architecture, workflow, and operational questions.';
         }
 
         function autoResizeQuestion() {
@@ -826,18 +1000,31 @@
 
         function resetChat() {
             mcpEls.messages.innerHTML = '';
-            addMessage('assistant', '你好，我是本地 AI 助手。你可以問我救援事件、SEG/Pose 偵測流程，或請我整理目前系統狀態。', { copyable: false });
+            addMessage('assistant', 'Hello. I am Sunny, the local AI assistant for this rescue-drone command center. You can ask about incidents, detection/posture assessment, system status, or cited web research.');
+        }
+
+        async function runToolPrompt(tool) {
+            if (isSending) return;
+            const config = toolConfig(tool);
+            setMcpMode(config.mode);
+            mcpEls.question.value = config.prompt;
+            autoResizeQuestion();
+            await sendMessage();
         }
 
         document.addEventListener('DOMContentLoaded', () => {
             mcpEls.refreshBtn.addEventListener('click', loadMcpStatus);
             mcpEls.reloadEventsBtn.addEventListener('click', loadMcpEvents);
-            mcpEls.clearEventsBtn?.addEventListener('click', clearMcpEvents);
+            mcpEls.clearEventsBtn.addEventListener('click', clearMcpEvents);
             mcpEls.summarizeBtn.addEventListener('click', sendMessage);
             mcpEls.rescueModeBtn.addEventListener('click', () => setMcpMode('rescue'));
             mcpEls.generalModeBtn.addEventListener('click', () => setMcpMode('general'));
             mcpEls.webModeBtn.addEventListener('click', () => setMcpMode('web'));
             mcpEls.clearBtn.addEventListener('click', resetChat);
+            mcpEls.tools.addEventListener('click', (event) => {
+                const button = event.target.closest('.tool-action');
+                if (button) runToolPrompt(button.dataset.tool || '');
+            });
             mcpEls.question.addEventListener('input', autoResizeQuestion);
             mcpEls.question.addEventListener('keydown', (event) => {
                 if (event.key === 'Enter' && !event.shiftKey) {
@@ -845,7 +1032,6 @@
                     sendMessage();
                 }
             });
-
             document.querySelectorAll('.prompt-chip').forEach((button) => {
                 button.addEventListener('click', () => {
                     mcpEls.question.value = button.dataset.prompt || '';

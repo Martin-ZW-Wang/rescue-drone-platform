@@ -241,4 +241,76 @@ class DroneService
 
         return $res->json();
     }
+
+    public function radioStatus(): array
+    {
+        $res = Http::timeout(5)->get($this->baseUrl . '/radio/status');
+
+        if (!$res->successful()) {
+            return $res->json() ?: [
+                'ok' => false,
+                'error' => "Flask /radio/status failed: HTTP {$res->status()}",
+            ];
+        }
+
+        return $res->json();
+    }
+
+    public function radioScan(): array
+    {
+        $res = Http::timeout(30)->post($this->baseUrl . '/radio/scan');
+
+        if (!$res->successful()) {
+            return $res->json() ?: [
+                'ok' => false,
+                'error' => "Flask /radio/scan failed: HTTP {$res->status()}",
+            ];
+        }
+
+        return $res->json();
+    }
+
+    public function radioPreflight(): array
+    {
+        $res = Http::timeout(30)->post($this->baseUrl . '/radio/preflight');
+
+        if (!$res->successful()) {
+            return $res->json() ?: [
+                'ok' => false,
+                'error' => "Flask /radio/preflight failed: HTTP {$res->status()}",
+            ];
+        }
+
+        return $res->json();
+    }
+
+    public function radioAutoHop(): array
+    {
+        $res = Http::timeout(30)->post($this->baseUrl . '/radio/auto-hop');
+
+        if (!$res->successful()) {
+            return $res->json() ?: [
+                'ok' => false,
+                'error' => "Flask /radio/auto-hop failed: HTTP {$res->status()}",
+            ];
+        }
+
+        return $res->json();
+    }
+
+    public function radioChannel(int $channel): array
+    {
+        $res = Http::timeout(10)->post($this->baseUrl . '/radio/channel', [
+            'channel' => $channel,
+        ]);
+
+        if (!$res->successful()) {
+            return $res->json() ?: [
+                'ok' => false,
+                'error' => "Flask /radio/channel failed: HTTP {$res->status()}",
+            ];
+        }
+
+        return $res->json();
+    }
 }

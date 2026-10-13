@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Services\DroneService;
+use App\Support\CommandCenterErrors;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Throwable;
@@ -17,12 +18,16 @@ class DroneApiController extends Controller
         try {
             return response()->json($this->droneService->getStatus());
         } catch (Throwable $e) {
-            return response()->json([
-                'ok' => false,
-                'error' => 'STATUS_PROXY_FAILED',
-                'message' => $e->getMessage(),
-            ], 500);
+            return response()->json(CommandCenterErrors::payload('STATUS_PROXY_FAILED', $e->getMessage()), 500);
         }
+    }
+
+    public function errors(): JsonResponse
+    {
+        return response()->json([
+            'ok' => true,
+            'catalog' => CommandCenterErrors::CATALOG,
+        ]);
     }
 
     public function start(): JsonResponse
@@ -251,6 +256,59 @@ class DroneApiController extends Controller
                 'error' => 'SEG_DEBUG_PROXY_FAILED',
                 'message' => $e->getMessage(),
             ], 500);
+        }
+    }
+
+    public function radioStatus(): JsonResponse
+    {
+        try {
+            return response()->json($this->droneService->radioStatus());
+        } catch (Throwable $e) {
+            return response()->json(CommandCenterErrors::payload('RADIO_STATUS_PROXY_FAILED', $e->getMessage()), 500);
+        }
+    }
+
+    public function radioScan(): JsonResponse
+    {
+        try {
+            $data = $this->droneService->radioScan();
+            return response()->json($data, ($data['ok'] ?? false) ? 200 : 503);
+        } catch (Throwable $e) {
+            return response()->json(CommandCenterErrors::payload('RADIO_SCAN_PROXY_FAILED', $e->getMessage()), 500);
+        }
+    }
+
+    public function radioPreflight(): JsonResponse
+    {
+        try {
+            $data = $this->droneService->radioPreflight();
+            return response()->json($data, ($data['ok'] ?? false) ? 200 : 428);
+        } catch (Throwable $e) {
+            return response()->json(CommandCenterErrors::payload('RADIO_PREFLIGHT_PROXY_FAILED', $e->getMessage()), 500);
+        }
+    }
+
+    public function radioAutoHop(): JsonResponse
+    {
+        try {
+            $data = $this->droneService->radioAutoHop();
+            return response()->json($data, ($data['ok'] ?? false) ? 200 : 503);
+        } catch (Throwable $e) {
+            return response()->json(CommandCenterErrors::payload('RADIO_AUTO_HOP_PROXY_FAILED', $e->getMessage()), 500);
+        }
+    }
+
+    public function radioChannel(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'channel' => ['required', 'integer', 'in:1,6,11'],
+        ]);
+
+        try {
+            $data = $this->droneService->radioChannel($validated['channel']);
+            return response()->json($data, ($data['ok'] ?? false) ? 200 : 422);
+        } catch (Throwable $e) {
+            return response()->json(CommandCenterErrors::payload('RADIO_CHANNEL_PROXY_FAILED', $e->getMessage()), 500);
         }
     }
 }
